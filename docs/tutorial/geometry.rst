@@ -3,27 +3,33 @@
 Geometry
 ========
 
-This tutorial will teach you how to set your geometry for your magnets. The `geometry` parameter can accept numpy arrays and functions.
-We'll need some basic code to view the shapes. To pan around in the 3D PyVista plots, you might need to install some extra stuff (namely trame):
-
-.. code-block:: console
-    
-    pip install ipywidgets 'pyvista[all,trame]'
-
+This tutorial will teach you how to set your geometry for your magnets. The ``geometry`` parameter can accept numpy arrays and functions.
 
 .. code-block:: python
 
     import numpy as np
     from mumaxplus import Ferromagnet, Grid, World
     import mumaxplus.util.shape as shape
-    from mumaxplus.util.show import show_magnet_geometry
+    import matplotlib.pyplot as plt
 
-We will first define the constants of our world and grid. The grid is comprised of 128 x 64 x 32 cells of each 1 x 1 x 1 nm³.
+We will first define the constants of our world and grid. The grid is comprised of 128 x 64 x 1 cells of each 1 x 1 x 1 nm³.
 
 .. code-block:: python
 
-    nx, ny, nz = 128, 64, 32
+    nx, ny, nz = 128, 64, 1
     cx, cy, cz = 1e-9, 1e-9, 1e-9
+
+Now we create a function to visualise the geometry. In the final images empty space will be shown as white while the magnetic material will be gray.
+
+.. code-block:: python
+
+    def show_2D_geom(magnet):
+        geom = magnet.geometry[0,...]
+        im_extent = (-0.5*cx * 1e9, (nx*cx - 0.5*cx) * 1e9, -0.5*cy * 1e9, (ny*cy - 0.5*cy) * 1e9)
+        plt.imshow(geom, cmap="Greys", origin="lower", extent=im_extent, vmin=0, vmax=2)
+        plt.xlabel("x (nm)")
+        plt.ylabel("y (nm)")
+        plt.show()
 
 1. Numpy arrays
 ---------------
@@ -41,7 +47,7 @@ If we want our magnet to be the entire grid we do not have to specify a geometry
     magnet = Ferromagnet(world=world, grid=grid)
     magnet.magnetization = (1,0,0)
 
-    show_magnet_geometry(magnet)
+    show_2D_geom(magnet)
 
 .. image:: ../images/magnet_full.png
    :align: center
@@ -49,7 +55,7 @@ If we want our magnet to be the entire grid we do not have to specify a geometry
 
 1.2 Eliminating pixels
 ^^^^^^^^^^^^^^^^^^^^^^
-If we want to remove some pixels from the magnet we can create an array as big as our grid and set some values to 0 (or `False`). Note that the array should have a shape of (nz, ny, nx).
+If we want to remove some pixels from the magnet we can create an array as big as our grid and set some values to 0 (or ``False``). Note that the array should have a shape of (nz, ny, nx).
 Let's now remove a pixel at the center row of the magnet.
 
 .. code-block:: python
@@ -63,7 +69,7 @@ Let's now remove a pixel at the center row of the magnet.
     magnet = Ferromagnet(world=world, grid=grid, geometry=geom_array)
     magnet.magnetization = (1,0,0)
 
-    show_magnet_geometry(magnet)
+    show_2D_geom(magnet)
 
 .. image:: ../images/magnet_remove_line.png
    :align: center
@@ -75,7 +81,7 @@ We can also create our own functions to form geometries. The input of every func
 
 2.1 Circle
 ^^^^^^^^^^
-Here we create a circle with a radius of 20nm at the center of the grid
+Here we create a circle with a radius of 20nm at the center of the grid.
 
 .. code-block:: python
 
@@ -87,7 +93,7 @@ Here we create a circle with a radius of 20nm at the center of the grid
     magnet = Ferromagnet(world=world, grid=grid, geometry=geomfunc)
     magnet.magnetization = (1,0,0)
 
-    show_magnet_geometry(magnet)
+    show_2D_geom(magnet)
 
 .. image:: ../images/magnet_cylinder.png
    :align: center
@@ -112,7 +118,7 @@ Here we will cut a sawtooth pattern out of a magnet.
     magnet = Ferromagnet(world=world, grid=grid, geometry=saw)
     magnet.magnetization = (1,0,0)
 
-    show_magnet_geometry(magnet)
+    show_2D_geom(magnet)
 
 .. image:: ../images/magnet_sawtooth.png
    :align: center
@@ -120,11 +126,11 @@ Here we will cut a sawtooth pattern out of a magnet.
 
 3. Shapes
 ---------
-Let's end this tutoial by using the `Shape` class to generate a geometry. For more information on different shapes and shape manipulations see :doc:`Shapes <shapes>`.
+Let's end this tutoial by using the ``Shape`` class to generate a geometry. For more information on different shapes and shape manipulations see :doc:`Shapes <shapes>`.
 
 3.1 Sphere
 ^^^^^^^^^^
-Here we create a spherical magnet with a diameter of 20nm
+Here we create a spherical magnet with a diameter of 60nm.
 
 .. code-block:: python
 
@@ -135,7 +141,7 @@ Here we create a spherical magnet with a diameter of 20nm
     circ.translate(nx*cx/2, ny*cy/2, nz*cz/2)
     magnet = Ferromagnet(world=world, grid=grid, geometry=circ)
 
-    show_magnet_geometry(magnet)
+    show_2D_geom(magnet)
 
 .. image:: ../images/magnet_sphere.png
    :align: center
