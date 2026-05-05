@@ -136,7 +136,3 @@ bool StrayField::assuredZero() const {
                                 "a Ferromagnet, a (non-collinear) "
                                 "Antiferromagnet/Ferrimagnet, nor an Altermagnet.");
 }
-
-Field StrayField::kernel() const {
-    return executor_->kernel();
-}

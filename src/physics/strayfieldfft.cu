@@ -239,7 +239,3 @@ Field StrayFieldFFTExecutor::exec() const {
   cudaLaunch(h.grid().ncells(), k_unpad, h.cu(), mpad->cu());
   return h;
 }
-
-Field StrayFieldFFTExecutor::kernel() const {
-    return kernel_.field();
-}
