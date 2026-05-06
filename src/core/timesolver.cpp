@@ -46,25 +46,26 @@ real TimeSolver::sensibleTimeStep() const {
       maxRhs = maxNorm;
 
     if (eq.noiseTerm && !eq.noiseTerm->assuredZero()) {
-      // TODO: could be replaced by maximum prefactor of noise, without curand
-      // noise generation, but with some sensible expected maximum
-      real localMaxNoise = maxVecNorm(eq.noiseTerm->eval());
-      if (localMaxNoise > maxNoise) maxNoise = localMaxNoise;
+      // TODO: replace by expected maximum prefactor of noise, depending on the
+      // number of cells, without curand noise generation?
+      real eqMaxNoise = maxVecNorm(eq.noiseTerm->eval());
+      if (eqMaxNoise > maxNoise) maxNoise = eqMaxNoise;
     }
   }
 
-  if (maxRhs == 0) {
+  if (maxNoise == 0) {
     // Sensible timestep cannot be calculated if torque is zero
-    if (maxNoise == 0) return sensibleTimestepDefault();
-    // or only noise
+    if (maxRhs == 0) return sensibleTimestepDefault();
+    // with RHS but no noise
+    return sensibleFactor() / maxRhs;
+  }
+  // negligable RHS compared to noise
+  real smallNumber = 1e-3;
+  if (2 * sensibleFactor() * maxRhs / (maxNoise * maxNoise) < smallNumber) {
     // return solution of dt = sensibleFactor / (maxNoise / sqrt(dt))
-    // TODO: check that this makes sense
     return pow(sensibleFactor() / maxNoise , 2);
   }
-  // with rhs but no noise
-  if (maxNoise == 0) return sensibleFactor() / maxRhs;
-
-  // rhs and noise
+  // RHS and noise
   // returns solution of dt = sensibleFactor / (maxRhs + maxNoise/sqrt(dt))
   real D = pow(maxNoise, 2) + 4 * maxRhs * sensibleFactor();  // discriminant
   return pow((sqrt(D) - maxNoise) / (2 * maxRhs), 2);
