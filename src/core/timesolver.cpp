@@ -37,13 +37,37 @@ RKmethod TimeSolver::getRungeKuttaMethod() {
 real TimeSolver::sensibleTimeStep() const {
   if (eqs_.empty())
     return 0.0;  // Timestep is irrelevant if there are no equations to solve
-  real globalMaxNorm = 0;
-  for (auto eq : eqs_)
-    if (real maxNorm = maxVecNorm(eq.rhs->eval()); maxNorm > globalMaxNorm)
-      globalMaxNorm = maxNorm;
-  if (globalMaxNorm == 0) // Sensible timestep cannot be calculated if torque is zero
-    return sensibleTimestepDefault_;
-  return sensibleFactor_ / globalMaxNorm;
+
+  // find global maxima
+  real maxRhs = 0;
+  real maxNoise = 0;
+  for (auto eq : eqs_) {
+    if (real maxNorm = maxVecNorm(eq.rhs->eval()); maxNorm > maxRhs)
+      maxRhs = maxNorm;
+
+    if (eq.noiseTerm && !eq.noiseTerm->assuredZero()) {
+      // TODO: could be replaced by maximum prefactor of noise, without curand
+      // noise generation, but with some sensible expected maximum
+      real localMaxNoise = maxVecNorm(eq.noiseTerm->eval());
+      if (localMaxNoise > maxNoise) maxNoise = localMaxNoise;
+    }
+  }
+
+  if (maxRhs == 0) {
+    // Sensible timestep cannot be calculated if torque is zero
+    if (maxNoise == 0) return sensibleTimestepDefault();
+    // or only noise
+    // return solution of dt = sensibleFactor / (maxNoise / sqrt(dt))
+    // TODO: check that this makes sense
+    return pow(sensibleFactor() / maxNoise , 2);
+  }
+  // with rhs but no noise
+  if (maxNoise == 0) return sensibleFactor() / maxRhs;
+
+  // rhs and noise
+  // returns solution of dt = sensibleFactor / (maxRhs + maxNoise/sqrt(dt))
+  real D = pow(maxNoise, 2) + 4 * maxRhs * sensibleFactor();  // discriminant
+  return pow((sqrt(D) - maxNoise) / (2 * maxRhs), 2);
 }
 
 void TimeSolver::setEquations(std::vector<DynamicEquation> eqs) {
