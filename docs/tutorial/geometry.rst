@@ -18,6 +18,7 @@ We will first define the constants of our world and grid. The grid is comprised 
 
     nx, ny, nz = 128, 64, 1
     cx, cy, cz = 1e-9, 1e-9, 1e-9
+    center = cx*(nx-1)/2, cy*(ny-1)/2, cz*(nz-1)/2
 
 Now we create a function to visualise the geometry. In the final images empty space will be shown as white while the magnetic material will be gray.
 
@@ -55,7 +56,7 @@ If we want our magnet to be the entire grid we do not have to specify a geometry
 1.2 Eliminating pixels
 ^^^^^^^^^^^^^^^^^^^^^^
 If we want to remove some pixels from the magnet we can create an array as big as our grid and set some values to 0 (or ``False``). Note that the array should have a shape of (nz, ny, nx).
-Let's now remove a pixel at the center row of the magnet.
+Let's now remove a row of cells at the center of the magnet.
 
 .. code-block:: python
 
@@ -86,7 +87,7 @@ Here we create a circle with a radius of 20nm at the center of the grid.
     world = World(cellsize=(cx, cy, cz))
     grid  = Grid((nx, ny, nz))
 
-    geomfunc = lambda x, y, z: (x-nx*cx/2)**2 + (y-ny*cy/2)**2 < (20e-9)**2
+    geomfunc = lambda x, y, z: (x - center[0])**2 + (y - center[1])**2 < (20e-9)**2
 
     magnet = Ferromagnet(world=world, grid=grid, geometry=geomfunc)
 
@@ -134,7 +135,7 @@ Here we create a spherical magnet with a diameter of 60nm.
     grid  = Grid((nx, ny, nz))
 
     circ = shape.Sphere(diam=20e-9)
-    circ.translate(nx*cx/2, ny*cy/2, nz*cz/2)
+    circ.translate(*center)
     magnet = Ferromagnet(world=world, grid=grid, geometry=circ)
 
     show_2D_geom(magnet)
