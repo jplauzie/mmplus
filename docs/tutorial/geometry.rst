@@ -45,7 +45,6 @@ If we want our magnet to be the entire grid we do not have to specify a geometry
     grid  = Grid((nx, ny, nz))
 
     magnet = Ferromagnet(world=world, grid=grid)
-    magnet.magnetization = (1,0,0)
 
     show_2D_geom(magnet)
 
@@ -67,7 +66,6 @@ Let's now remove a pixel at the center row of the magnet.
     geom_array[:,ny//2,:] = np.zeros(shape=(nz,nx))
 
     magnet = Ferromagnet(world=world, grid=grid, geometry=geom_array)
-    magnet.magnetization = (1,0,0)
 
     show_2D_geom(magnet)
 
@@ -91,7 +89,6 @@ Here we create a circle with a radius of 20nm at the center of the grid.
     geomfunc = lambda x, y, z: (x-nx*cx/2)**2 + (y-ny*cy/2)**2 < (20e-9)**2
 
     magnet = Ferromagnet(world=world, grid=grid, geometry=geomfunc)
-    magnet.magnetization = (1,0,0)
 
     show_2D_geom(magnet)
 
@@ -116,7 +113,6 @@ Here we will cut a sawtooth pattern out of a magnet.
         return y > func
 
     magnet = Ferromagnet(world=world, grid=grid, geometry=saw)
-    magnet.magnetization = (1,0,0)
 
     show_2D_geom(magnet)
 
