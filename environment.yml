@@ -1,5 +1,6 @@
 name: mumaxplus
 channels:
+  - bkryza/label/clang-uml
   - conda-forge
   - defaults
 dependencies:
@@ -27,10 +28,14 @@ dependencies:
   - jupyter
   - ipywidgets
   - pyvista
+  - vtk
   - pillow  # should be contained in matplotlib
   - pandas
 
   # documentation generation
+  - clang
+  - clang-uml
+  - plantuml
   - sphinx
   - sphinx-book-theme
   - numpydoc

@@ -149,25 +149,24 @@ def setup(app):
             UserWarning
         )
         return
+    
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
     subprocess.run([
-    "cmake",
-    "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
-    "-B", "build"
+        "cmake",
+        "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+        "-B", "build"
     ], check=True, cwd=project_root)
-    subprocess.run(['clang-uml'], cwd=project_root)
 
-conf_dir = os.path.dirname(os.path.abspath(__file__))
-clang_uml_path = os.path.join(conf_dir, "../.clang-uml")
+    clang_resource_dir = subprocess.check_output(
+        ["clang", "-print-resource-dir"], text=True
+    ).strip()
 
-with open(clang_uml_path, "r") as f:
-    content = f.read()
+    subprocess.run([
+        'clang-uml',
+        '--add-compile-flag', f'-resource-dir={clang_resource_dir}'
+    ], cwd=project_root)
 
-content = os.path.expandvars(content)
-
-with open(clang_uml_path, "w") as f:
-    f.write(content)
-
-plantuml = f"java -jar {os.path.join(os.path.dirname(os.path.abspath(__file__)), 'diagrams', 'plantuml.jar')}"
+plantuml = "plantuml"
 
 plantuml_output_format = 'svg_img'
