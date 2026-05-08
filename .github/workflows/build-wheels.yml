@@ -45,7 +45,7 @@ jobs:
       - name: Build wheel on Linux (CUDA ${{ matrix.cuda }})
         if: runner.os == 'Linux'
         run: |
-          docker run --rm \
+          docker run --rm -i \
             -v $PWD:/src \
             -w /src \
             nvidia/cuda:${{ matrix.cuda }}-devel-ubuntu24.04 \
