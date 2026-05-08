@@ -15,13 +15,13 @@ jobs:
       matrix:
         include:
           # Linux
-          - os: ubuntu-latest
-            cuda: "12.9"
+          - os: ubuntu-24.04
+            cuda: "12.9.1"
             python: "3.13"
 
           # Windows
           - os: windows-latest
-            cuda: "12.9"
+            cuda: "12.9.1"
             python: "3.13"
 
     steps:
@@ -45,7 +45,7 @@ jobs:
           docker run --rm \
             -v $PWD:/src \
             -w /src \
-            nvidia/cuda:${{ matrix.cuda }}-devel-ubuntu22.04 \
+            nvidia/cuda:${{ matrix.cuda }}-devel-ubuntu24.04 \
             bash -eux << 'EOF'
               apt-get update
               apt-get install -y python3 python3-pip cmake
@@ -57,7 +57,7 @@ jobs:
       # ================ WINDOWS ================
       - name: Install CUDA Toolkit (Windows)
         if: runner.os == 'Windows'
-        uses: Jimver/cuda-toolkit@v0.2.14
+        uses: Jimver/cuda-toolkit@v0.2.35
         with:
           cuda: ${{ matrix.cuda }}
 
