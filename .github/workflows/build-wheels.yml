@@ -50,15 +50,17 @@ jobs:
             -w /src \
             nvidia/cuda:${{ matrix.cuda }}-devel-ubuntu24.04 \
             bash -euxo pipefail << 'EOF'
+              export DEBIAN_FRONTEND=noninteractive
+
               echo "=== System info ==="
               uname -a
-              python3 --version || true
               nvcc --version || true
 
               echo "=== Installing tools ==="
               apt-get update
-              apt-get install -y python3 python3-pip cmake
+              apt-get install -y python3 python3-pip cmake tzdata
               pip3 install --upgrade pip build wheel auditwheel
+              python3 --version || true
 
               echo "=== Starting wheel build ==="
               python3 -m build --wheel
