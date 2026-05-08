@@ -1,3 +1,46 @@
+[build-system]
+requires = ["setuptools", "cmake"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mumaxplus"
+dynamic = ["version"]
+dependencies = [
+  "numpy",
+  "scipy",
+  "matplotlib",
+  "pyovf",
+  "tqdm",
+  "pyvista"
+]
+requires-python = ">=3.11"
+authors = [
+  {name = "Jeroen Mulkers", email = "jeroen.mulkers@gmail.com"}
+]
+maintainers = [
+  {name = "Diego De Gusem", email = "diego.degusem@ugent.be"},
+  {name = "Ian Lateur", email = "ian.lateur@ugent.be"},
+  {name = "Lars Moreels", email = "lars.moreels@ugent.be"}
+]
+description = "Finite difference micromagnetic solver"
+readme = "README.md"
+license = "GPL-3.0-only"
+license-files = ["LICENSE"]
+keywords = ["antiferromagnetism", "ferrimagnetism", "ferromagnetism", "finite difference", "GPU", "magnetoelasticity", "micromagnetism", "non-collinear antiferromagnetism", "simulation"]
+classifiers = [
+  "Development Status :: 5 - Production/Stable",
+  "Environment :: GPU :: NVIDIA CUDA",
+  "Intended Audience :: Science/Research",
+  "Topic :: Scientific/Engineering :: Physics"
+]
+
+[project.urls]
+homepage = "https://mumax.github.io/plus/"
+repository = "https://github.com/mumax/plus.git"
+releasenotes = "https://github.com/mumax/plus/releases"
+documentation = "https://mumax.github.io/plus/api.html"
+issues = "https://github.com/mumax/plus/issues"
+
 [tool.black]
 target-version = ['py37', 'py38']
 force-exclude = '''
@@ -16,5 +59,6 @@ force-exclude = '''
 minversion = '6.0'
 addopts = '-ra -q --verbose'
 testpaths = ['test']
-[build-system]
-requires = ["setuptools", "cmake"]
+
+[tool.setuptools.dynamic]
+version = { attr = "mumaxplus.__version__" }
