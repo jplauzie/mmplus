@@ -7,20 +7,20 @@ on:
 
 jobs:
   build-wheels:
-    name: Build (${{ matrix.os }}, CUDA ${{ matrix.cuda }}, py${{ matrix.python }})
-    runs-on: ${{ matrix.os }}
+    name: Build (${{ matrix.os.name }}-${{ matrix.os.version }}, CUDA ${{ matrix.cuda }}, py${{ matrix.python }})
+    runs-on: ${{ matrix.os.name }}-${{ matrix.os.version }}
 
     strategy:
       fail-fast: false
       matrix:
         include:
           # Linux
-          - os: ubuntu-22.04
+          - os: {name: "ubuntu", version: "22.04"}
             cuda: "12.0.1"
             python: "3.12"
 
           # Windows
-          - os: windows-latest
+          - os: {name: "windows", version: "latest"}
             cuda: "12.0.1"
             python: "3.12"
 
@@ -48,7 +48,7 @@ jobs:
           docker run --rm -i \
             -v $PWD:/src \
             -w /src \
-            nvidia/cuda:${{ matrix.cuda }}-devel-ubuntu24.04 \
+            nvidia/cuda:${{ matrix.cuda }}-devel-${{ matrix.os.name }}${{ matrix.os.version }} \
             bash -euxo pipefail << 'EOF'
               export DEBIAN_FRONTEND=noninteractive
 
@@ -104,7 +104,7 @@ jobs:
       - name: Upload wheel artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: mumaxplus-${{ matrix.os }}-cuda${{ matrix.cuda }}-py${{ matrix.python }}
+          name: mumaxplus-${{ matrix.os.name }}-${{ matrix.os.version }}-cuda${{ matrix.cuda }}-py${{ matrix.python }}
           path: |
             dist/mumaxplus-*.whl
             repaired/mumaxplus-*.whl
