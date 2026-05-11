@@ -61,7 +61,7 @@ jobs:
               apt-get install -y software-properties-common
               add-apt-repository ppa:deadsnakes/ppa
               apt-get update
-              apt-get install -y python${{ matrix.python }} python${{ matrix.python }}-venv python${{ matrix.python }}-pip cmake tzdata patchelf
+              apt-get install -y python${{ matrix.python }} python${{ matrix.python }}-venv python3-pip cmake tzdata patchelf
 
               echo "=== Creating virtual environment ==="
               python3 -m venv /venv
