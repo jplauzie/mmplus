@@ -64,14 +64,14 @@ jobs:
               apt-get install -y python${{ matrix.python }} python${{ matrix.python }}-venv python3-pip cmake tzdata patchelf
 
               echo "=== Creating virtual environment ==="
-              python3 -m venv /venv
+              python${{ matrix.python }} -m venv /venv
               source /venv/bin/activate
-              python3 --version || true
+              python${{ matrix.python }} --version || true
               pip install --upgrade pip
               pip install build wheel auditwheel
 
               echo "=== Starting wheel build ==="
-              python3 -m build --wheel
+              python${{ matrix.python }} -m build --wheel
 
               echo "=== dist contents ==="
               find dist -maxdepth 2 -type f || echo "dist is empty"
