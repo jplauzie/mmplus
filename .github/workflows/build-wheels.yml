@@ -77,7 +77,9 @@ jobs:
               find dist -maxdepth 2 -type f || echo "dist is empty"
 
               echo "=== Running auditwheel ==="
+              export LD_LIBRARY_PATH=/usr/local/cuda/lib64:${LD_LIBRARY_PATH}
               auditwheel repair dist/*.whl -w repaired/
+              auditwheel show repaired/*.whl
 
               echo "=== repaired contents ==="
               find repaired -maxdepth 2 -type f || echo "repaired is empty"
