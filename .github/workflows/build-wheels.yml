@@ -41,8 +41,6 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           docker run --rm -i \
-            -e HOST_UID=$(id -u) \
-            -e HOST_GID=$(id -g) \
             -v $PWD:/src \
             -w /src \
             nvidia/cuda:${{ matrix.cuda }}-devel-${{ matrix.os.name }}${{ matrix.os.version }} \
@@ -61,7 +59,6 @@ jobs:
               apt-get install -y python${{ matrix.python }} python${{ matrix.python }}-venv python${{ matrix.python }}-dev python3-pip cmake tzdata patchelf
 
               echo "=== Creating virtual environment ==="
-              chown -R $HOST_UID:$HOST_GID /src
               python${{ matrix.python }} -m venv /venv
               source /venv/bin/activate
               python${{ matrix.python }} --version || true
@@ -84,9 +81,14 @@ jobs:
           EOF
       
       - name: Build source distribution tar.gz
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.python == '3.14'
         run: |
-          rm -rf build dist *.egg-info
+          echo "=== Creating clean build directory for .tar.gz --sdist ==="
+          mkdir clean_src
+          rsync -a --exclude build --exclude dist --exclude repaired --exclude '*.egg-info' ./ clean_src/
+          cd clean_src
+          python --version
+          python -m pip install --upgrade pip build
           python -m build --sdist
 
       # ================ WINDOWS ================
@@ -115,4 +117,4 @@ jobs:
           path: |
             dist/mumaxplus-*win*.whl
             repaired/mumaxplus-*.whl
-            dist/mumaxplus-*.tar.gz
+            clean_src/dist/mumaxplus-*.tar.gz
