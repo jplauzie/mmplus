@@ -13,16 +13,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          # Linux
-          - os: {name: "ubuntu", version: "22.04"}
-            cuda: "12.4.1"
-            python: "3.12"
-
-          # Windows
-          - os: {name: "windows", version: "latest"}
-            cuda: "12.4.1"
-            python: "3.12"
+        os:
+          - {name: "ubuntu", version: "22.04"}
+          - {name: "windows", version: "latest"}
+        cuda: ["12.4.1"]
+        python: ["3.11", "3.12", "3.13", "3.14"]
 
     steps:
       - name: Check out source
