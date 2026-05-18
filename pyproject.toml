@@ -35,11 +35,12 @@ classifiers = [
 ]
 
 [project.urls]
-homepage = "https://mumax.github.io/plus/"
-repository = "https://github.com/mumax/plus.git"
-releasenotes = "https://github.com/mumax/plus/releases"
-documentation = "https://mumax.github.io/plus/api.html"
-issues = "https://github.com/mumax/plus/issues"
+Homepage = "https://mumax.github.io/plus/"
+Repository = "https://github.com/mumax/plus.git"
+"Release notes" = "https://github.com/mumax/plus/releases"
+Documentation = "https://mumax.github.io/plus/api.html"
+Issues = "https://github.com/mumax/plus/issues"
+Paper = "https://doi.org/10.1038/s41524-025-01893-y"
 
 [tool.black]
 target-version = ['py37', 'py38']
