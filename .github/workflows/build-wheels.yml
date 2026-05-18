@@ -41,7 +41,8 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           docker run --rm -i \
-            --user $(id -u):$(id -g) \
+            -e HOST_UID=$(id -u) \
+            -e HOST_GID=$(id -g) \
             -v $PWD:/src \
             -w /src \
             nvidia/cuda:${{ matrix.cuda }}-devel-${{ matrix.os.name }}${{ matrix.os.version }} \
@@ -60,6 +61,7 @@ jobs:
               apt-get install -y python${{ matrix.python }} python${{ matrix.python }}-venv python${{ matrix.python }}-dev python3-pip cmake tzdata patchelf
 
               echo "=== Creating virtual environment ==="
+              chown -R $HOST_UID:$HOST_GID /src
               python${{ matrix.python }} -m venv /venv
               source /venv/bin/activate
               python${{ matrix.python }} --version || true
