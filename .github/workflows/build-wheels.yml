@@ -83,6 +83,7 @@ jobs:
       - name: Build source distribution tar.gz
         if: runner.os == 'Linux'
         run: |
+          rm -rf build dist *.egg-info
           python -m build --sdist
 
       # ================ WINDOWS ================
