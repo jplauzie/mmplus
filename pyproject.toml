@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "mumaxplus"
 dynamic = ["version"]
 dependencies = [
-  "numpy",
+  "numpy>=2",
   "scipy",
   "matplotlib",
   "pyovf",
