@@ -84,6 +84,11 @@ jobs:
               echo "=== repaired contents ==="
               find repaired -maxdepth 2 -type f || echo "repaired is empty"
           EOF
+      
+      - name: Build source distribution tar.gz
+        if: runner.os == 'Linux'
+        run: |
+          python -m build --sdist
 
       # ================ WINDOWS ================
       - name: Install CUDA Toolkit (Windows)
@@ -109,6 +114,6 @@ jobs:
         with:
           name: mumaxplus-${{ matrix.os.name }}-${{ matrix.os.version }}-cuda${{ matrix.cuda }}-py${{ matrix.python }}
           path: |
-            dist/mumaxplus-*.whl
+            dist/mumaxplus-*win*.whl
             repaired/mumaxplus-*.whl
-
+            dist/mumaxplus-*.tar.gz
