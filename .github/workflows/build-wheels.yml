@@ -41,6 +41,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           docker run --rm -i \
+            --user $(id -u):$(id -g) \
             -v $PWD:/src \
             -w /src \
             nvidia/cuda:${{ matrix.cuda }}-devel-${{ matrix.os.name }}${{ matrix.os.version }} \
