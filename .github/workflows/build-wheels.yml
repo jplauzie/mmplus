@@ -146,11 +146,10 @@ jobs:
           echo "=== GitHub release files ==="
           ls -lh dist-gh-release
 
-      - name: Publish .tar.gz to TestPyPI
+      - name: Publish .tar.gz to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          password: ${{ secrets.TESTPYPI_API_TOKEN }}
-          repository-url: https://test.pypi.org/legacy/
+          password: ${{ secrets.PYPI_API_TOKEN }}
           packages-dir: dist-pypi/
 
       - name: Add wheels to release
