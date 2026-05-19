@@ -1,6 +1,14 @@
 name: Build wheels
 
 on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g., v1.2.0)"
+        required: true
+
   push:
     branches: 
       - ci/build-wheels
@@ -118,3 +126,42 @@ jobs:
             dist/mumaxplus-*win*.whl
             repaired/mumaxplus-*.whl
             clean_src/dist/mumaxplus-*.tar.gz
+
+  publish-artifacts:
+    needs: build-wheels
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      
+      - name: Collect release files
+        run: |
+          rm -rf dist dist-pypi dist-gh-release
+          mkdir dist-pypi dist-gh-release
+          find artifacts -type f -name "*.tar.gz" -exec cp {} dist-pypi/ \;
+          find artifacts -type f -name "*.whl" -exec cp {} dist-gh-release/ \;
+
+          echo "=== PyPI release files ==="
+          ls -lh dist-pypi
+          
+          echo "=== GitHub release files ==="
+          ls -lh dist-gh-release
+
+      - name: Publish .tar.gz to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.TESTPYPI_API_TOKEN }}
+          repository-url: https://test.pypi.org/legacy/
+          packages-dir: dist-pypi/
+
+      - name: Add wheels to release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ github.event.release.tag_name || github.event.inputs.tag }}
+          files: dist-gh-release/*
+          overwrite: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
