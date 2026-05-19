@@ -9,10 +9,6 @@ on:
         description: "Release tag (e.g., v1.2.0)"
         required: true
 
-  push:
-    branches: 
-      - ci/build-wheels
-
 jobs:
   build-wheels:
     name: Build (${{ matrix.os.name }}-${{ matrix.os.version }}, CUDA ${{ matrix.cuda }}, py${{ matrix.python }})
