@@ -19,10 +19,33 @@ All demonstrations in the paper were simulated using version [v1.1.0](https://gi
 
 ## Installation
 
-### Dependencies
+mumax⁺ can be installed in various ways, listed below in order of increasing difficulty.
 
-mumax⁺ should work on any NVIDIA GPU.
-To get started you should install the following tools yourself.
+### Google Colab
+
+If you don't have access to an NVIDIA GPU, you can run mumax⁺ online using Google Colab. Simply make a copy of [this Jupyter notebook](https://colab.research.google.com/github/mumax/plus/blob/master/examples/colab.ipynb) and you're good to go!
+
+### Installing pre-built wheels
+
+If you prefer to use your own GPU, you must install the mumax⁺ Python package. Pre-built wheels provide the easiest method to do so if your system has
+
+- Python 3.11-3.14
+- an NVIDIA GPU with Compute Capability &geq;5.2
+- a CUDA driver of version &geq;550.54.15 on Linux or &geq;551.78 on Windows
+
+If these requirements are fulfilled, you can download the appropriate `.whl` for your system from the [most recent GitHub release](https://github.com/mumax/plus/releases/latest) and simply install it in your Python environment with
+
+```bash
+pip install wheel_name.whl
+```
+
+All dependencies of mumax⁺ are then automatically installed in that environment.
+
+### Installing from source
+
+mumax⁺ should work on any NVIDIA GPU. If no wheel is available for your system/GPU (or you want to contribute to mumax⁺ development), you will have to install mumax⁺ from source.
+
+For this, you must install the following tools yourself.
 Take care to avoid **version conflicts** between these different types of software and your hardware: click the arrows for more details.
 
 <details><summary>CUDA Toolkit</summary>
@@ -60,6 +83,29 @@ To see which CUDA Toolkit works for your GPU's Compute Capability, check [this S
 
 </details>
 
+<details><summary>CPython <i>(version ≥ 3.11)</i>, pip and miniconda/anaconda</summary>
+
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;All these Python-related tools should be included in a standard installation of [Anaconda or Miniconda](https://www.anaconda.com/download/success).
+
+👉 *Check installation with `python --version`, `pip --version` and `conda --version`.*
+
+</details>
+
+#### Installing a stable release from PyPI
+
+If you only need the latest stable version of mumax⁺, you should now be able to run
+
+```bash
+pip install mumaxplus
+```
+
+This will install any Python dependencies of mumax⁺ and build mumax⁺ from source.
+
+#### Installing a custom mumax⁺
+
+If you need an older version of mumax⁺ or wish to contribute to its development, you will need Git.
+Click the dropdown below to download Git if you haven't installed it yet.
+
 <details><summary>Git</summary>
 
 * **Windows:** [Download](https://git-scm.com/downloads) and install.
@@ -69,17 +115,7 @@ To see which CUDA Toolkit works for your GPU's Compute Capability, check [this S
 
 </details>
 
-<details><summary>CPython <i>(version ≥ 3.11)</i>, pip and miniconda/anaconda</summary>
-
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;All these Python-related tools should be included in a standard installation of [Anaconda or Miniconda](https://www.anaconda.com/download/success).
-
-👉 *Check installation with `python --version`, `pip --version` and `conda --version`.*
-
-</details>
-
-### Building mumax⁺
-
-First, clone the mumax⁺ Git repository. The `--recursive` flag is used in the following command to get the pybind11 submodule, which is needed to build mumax⁺.
+First, clone the mumax⁺ Git repository using the following command, where the `--recursive` flag is used to get the pybind11 submodule that is needed to build mumax⁺.
 
 ```bash
 git clone --recursive https://github.com/mumax/plus.git mumaxplus
@@ -116,7 +152,7 @@ pip install .
 >
 > If you want to change only the Python code, without needing to reinstall after each change, `pip install -ve .` can also be used.
 
-### Check the compilation
+### Check your mumax⁺ installation
 
 To check if you successfully compiled mumax⁺, we recommend you to run some [examples](#examples) from the `examples/` directory
 or to run the [tests](#testing) in the `test/` directory.
