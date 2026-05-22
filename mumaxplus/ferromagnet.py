@@ -545,7 +545,7 @@ class Ferromagnet(Magnet):
         
         See Also
         --------
-        thermal_noise
+        thermal_noise, thermal_seed
         """
         return Parameter(self._impl.temperature)
 
@@ -557,6 +557,22 @@ class Ferromagnet(Magnet):
                              + " number of grid cells.\n"
                              + "The used number of grid cells is {}.".format(self.grid.ncells))
         self.temperature.set(value)
+
+    @property
+    def thermal_seed(self) -> int:
+        """Return seed of the thermal noise generator.
+
+        If not set, a random seed is generated based on the current time.
+
+        See Also
+        --------
+        temperature, thermal_noise
+        """
+        return self._impl.thermal_seed
+
+    @thermal_seed.setter
+    def thermal_seed(self, value):
+        self._impl.thermal_seed = value
 
     @property
     def dmi_tensor(self) -> DmiTensor:
@@ -958,7 +974,7 @@ class Ferromagnet(Magnet):
         
         See Also
         --------
-        temperature
+        temperature, thermal_seed
         """
         return FieldQuantity(_cpp.thermal_noise(self._impl))
 

@@ -62,6 +62,7 @@ void wrap_ferromagnet(py::module& m) {
       .def_readonly("pol", &Ferromagnet::pol)
       .def_readonly("jcur", &Ferromagnet::jcur)
       .def_readonly("temperature", &Ferromagnet::temperature)
+      .def_property("thermal_seed", &Ferromagnet::getThermalSeed, &Ferromagnet::setThermalSeed)
       .def_readonly("dmi_tensor", &Ferromagnet::dmiTensor)
       .def_readonly("applied_potential", &Ferromagnet::appliedPotential)
       .def_readonly("conductivity", &Ferromagnet::conductivity)
