@@ -26,7 +26,7 @@ description = "Finite difference micromagnetic solver"
 readme = "README.md"
 license = "GPL-3.0-only"
 license-files = ["LICENSE"]
-keywords = ["antiferromagnetism", "ferrimagnetism", "ferromagnetism", "finite difference", "GPU", "magnetoelasticity", "micromagnetism", "non-collinear antiferromagnetism", "simulation"]
+keywords = ["mumax", "mumax+", "plus", "antiferromagnetism", "ferrimagnetism", "ferromagnetism", "finite difference", "GPU", "magnetoelasticity", "micromagnetism", "non-collinear antiferromagnetism", "simulation"]
 classifiers = [
   "Development Status :: 5 - Production/Stable",
   "Environment :: GPU :: NVIDIA CUDA",
