@@ -34,6 +34,11 @@ classifiers = [
   "Topic :: Scientific/Engineering :: Physics"
 ]
 
+[dependency-groups] # Installable via "pip install --group dev"
+docs = ["sphinx", "sphinxcontrib-video", "sphinx-copybutton", "sphinx-design", "sphinx-book-theme"]
+test = ["pytest", "pandas"]
+dev = [{include-group = "docs"}, {include-group = "test"}]
+
 [project.urls]
 Homepage = "https://mumax.github.io/plus/"
 Repository = "https://github.com/mumax/plus.git"
