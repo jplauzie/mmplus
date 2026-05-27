@@ -102,5 +102,5 @@ class StrayField(FieldQuantity):
 
     @property
     def kernel(self):
-        """Return the StrayFieldKernel."""
+        """Return the stray_field_kernel."""
         return self._impl.kernel
