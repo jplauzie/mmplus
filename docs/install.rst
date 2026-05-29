@@ -5,13 +5,13 @@ Installation
 
 mumax⁺ can be installed in various ways, listed below in order of increasing difficulty.
 
-Google Colab
-^^^^^^^^^^^^
+Option 1: Google Colab
+----------------------
 
 If you don't have access to an NVIDIA GPU, you can run mumax⁺ online using Google Colab. Simply make a copy of `this Jupyter notebook <https://colab.research.google.com/github/mumax/plus/blob/master/examples/colab.ipynb>`_ and you're good to go!
 
-Installing pre-built wheels
-^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Option 2: Installing pre-built wheels
+-------------------------------------
 
 If you prefer to use your own GPU for more demanding simulations, you must install the mumax⁺ Python package. Pre-built wheels provide the easiest method to do so on Linux or Windows if your system has
 
@@ -34,8 +34,8 @@ The ``.whl`` you downloaded can then simply be installed in your Python environm
 
 All dependencies of mumax⁺ are then automatically installed in that environment.
 
-Installing from source
-^^^^^^^^^^^^^^^^^^^^^^
+Option 3: Installing from source
+--------------------------------
 
 mumax⁺ should work on any NVIDIA GPU.
 If no wheel is available for your system/GPU (or you want to contribute to mumax⁺ development), you will have to install mumax⁺ from source.
@@ -85,8 +85,8 @@ Take care to avoid **version conflicts** between these different types of softwa
 
    👉 *Check installation with* ``python --version``, ``pip --version`` *and* ``conda --version``.
 
-Installing a stable release from PyPI
-"""""""""""""""""""""""""""""""""""""
+Option 3.1: Installing a stable release from PyPI
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 If you only need the latest stable version of mumax⁺, you should now be able to run
 
@@ -96,8 +96,8 @@ If you only need the latest stable version of mumax⁺, you should now be able t
 
 This will install any Python dependencies of mumax⁺ and build mumax⁺ from source.
 
-Installing a custom mumax⁺
-""""""""""""""""""""""""""
+Option 3.2: Installing a custom mumax⁺
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 If you need an older version of mumax⁺ or wish to contribute to its development, you will need Git.
 Click the dropdown below to download Git if you haven't installed it yet.
