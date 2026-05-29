@@ -25,13 +25,6 @@ See [INSTALL.md](INSTALL.md) or the [mumax⁺ website](https://mumax.github.io/p
 - installing pre-built wheels from the [GitHub releases](https://github.com/mumax/plus/releases/latest),
 - building from source.
 
-## Floating-point precision
-
-mumax⁺ can use either single or double floating-point precision.
-This can be controlled by the command-line argument `--mumaxplus-fp-precision` and/or the environment variable `MUMAXPLUS_FP_PRECISION`.
-
-See this [tutorial page](https://mumax.github.io/plus/tutorial/precision.html) or [example notebook](examples/precision.ipynb) for more details.
-
 ## Documentation
 
 Documentation for mumax⁺ can be found at http://mumax.github.io/plus.
@@ -56,6 +49,13 @@ or they are interactive notebooks (`.ipynb` files), which can be run using Jupyt
 ## Testing
 
 Several automated tests are located inside the `test/` directory. Type `pytest` inside the terminal to run them. Some are marked as `slow`, such as `test_mumax3_standardproblem5.py`. You can deselect those by running `pytest -m "not slow"`. Tests inside the `test/mumax3/` directory require external installation of mumax³. They are marked by `mumax3` and can be deselected in the same way.
+
+## Floating-point precision
+
+mumax⁺ can use either single or double floating-point precision.
+This can be controlled by the command-line argument `--mumaxplus-fp-precision` and/or the environment variable `MUMAXPLUS_FP_PRECISION`.
+
+See this [tutorial page](https://mumax.github.io/plus/tutorial/precision.html) or [example notebook](examples/precision.ipynb) for more details.
 
 ## Contributing
 
