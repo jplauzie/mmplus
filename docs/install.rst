@@ -13,13 +13,20 @@ If you don't have access to an NVIDIA GPU, you can run mumax⁺ online using Goo
 Installing pre-built wheels
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-If you prefer to use your own GPU, you must install the mumax⁺ Python package. Pre-built wheels provide the easiest method to do so if your system has
+If you prefer to use your own GPU for more demanding simulations, you must install the mumax⁺ Python package. Pre-built wheels provide the easiest method to do so on Linux or Windows if your system has
 
 - Python 3.11-3.14
 - an NVIDIA GPU with Compute Capability ≥5.2
 - a CUDA driver of version ≥550.54.15 on Linux or ≥551.78 on Windows
 
-If these requirements are fulfilled, you can download the appropriate ``.whl`` for your system from the `most recent GitHub release <https://github.com/mumax/plus/releases/latest>`_ and simply install it in your Python environment with
+If these requirements are fulfilled, you can download the appropriate wheel for your system from the `most recent GitHub release <https://github.com/mumax/plus/releases/latest>`_.
+
+.. tip::
+
+   To check which wheel you should/can download, run ``pip debug -v`` to list all wheel tags that are compatible with your system.
+   If none of these tags match any ``.whl`` filename on the GitHub release page, you will have to install mumax⁺ from source, as described in the next subsection.
+
+The ``.whl`` you downloaded can then simply be installed in your Python environment with
 
 .. code-block:: bash
 
