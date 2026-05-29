@@ -1,6 +1,5 @@
 name: mumaxplus
 channels:
-  - bkryza/label/clang-uml
   - conda-forge
   - defaults
 dependencies:
@@ -34,7 +33,6 @@ dependencies:
 
   # documentation generation
   - clang
-  - clang-uml
   - plantuml
   - sphinx
   - sphinx-book-theme

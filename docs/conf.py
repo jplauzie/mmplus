@@ -135,6 +135,14 @@ html_theme_options = {
 }
 
 def setup(app):
+    if shutil.which("clang-uml") is None:
+        warnings.warn(
+            "clang-uml not found. Skipping UML diagram generation. "
+            "Install it from https://github.com/bkryza/clang-uml or via your package manager.",
+            UserWarning
+        )
+        return
+    
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
     subprocess.run([
