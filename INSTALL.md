@@ -1,6 +1,8 @@
 # Installing mumax⁺
 
-mumax⁺ can be installed in various ways, listed below in order of increasing difficulty.
+mumax⁺ can be installed in various ways, listed as the various options below in order of increasing difficulty. The following flowchart may guide you to the easiest option for your situation.
+
+![Installation flowchart](docs/diagrams/installation/mumaxplus_installation.svg)
 
 ## Option 1: Google Colab
 
@@ -78,7 +80,7 @@ To see which CUDA Toolkit works for your GPU's Compute Capability, check [this S
 
 </details>
 
-### Option 3.1: Installing a stable release from PyPI
+### Option 3a: Installing a stable release from PyPI
 
 If you only need the latest stable version of mumax⁺, you should now be able to run
 
@@ -88,7 +90,7 @@ pip install mumaxplus
 
 This will install any Python dependencies of mumax⁺ and build mumax⁺ from source.
 
-### Option 3.2: Installing a custom mumax⁺
+### Option 3b: Installing a custom mumax⁺
 
 If you need an older version of mumax⁺ or wish to contribute to its development, you will need Git.
 Click the dropdown below to download Git if you haven't installed it yet.

@@ -3,7 +3,12 @@
 Installation
 ============
 
-mumax⁺ can be installed in various ways, listed below in order of increasing difficulty.
+mumax⁺ can be installed in various ways, listed as the various options below in order of increasing difficulty.
+The following flowchart may guide you to the easiest option for your situation.
+
+.. image:: diagrams/installation/mumaxplus_installation.svg
+   :name: install-flowchart
+
 
 Option 1: Google Colab
 ----------------------
@@ -85,7 +90,7 @@ Take care to avoid **version conflicts** between these different types of softwa
 
    👉 *Check installation with* ``python --version``, ``pip --version`` *and* ``conda --version``.
 
-Option 3.1: Installing a stable release from PyPI
+Option 3a: Installing a stable release from PyPI
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 If you only need the latest stable version of mumax⁺, you should now be able to run
@@ -96,7 +101,7 @@ If you only need the latest stable version of mumax⁺, you should now be able t
 
 This will install any Python dependencies of mumax⁺ and build mumax⁺ from source.
 
-Option 3.2: Installing a custom mumax⁺
+Option 3b: Installing a custom mumax⁺
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 If you need an older version of mumax⁺ or wish to contribute to its development, you will need Git.

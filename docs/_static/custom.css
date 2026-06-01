@@ -6,3 +6,8 @@ html[data-theme="dark"] .navbar-brand img {
 .headerlink {
     display: none;
 }
+
+#install-flowchart {
+    filter: none !important;
+    background-color: transparent !important;
+}
