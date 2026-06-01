@@ -61,9 +61,9 @@ Field evalThermalNoise(const Ferromagnet* magnet) {
   // CUDA RNG is only compatible with even N.
   if (N % 2) {
     real* tmp;
-    cudaMalloc(&tmp, (N + (N % 2)) * sizeof(real));
+    cudaMalloc(&tmp, (N + 1) * sizeof(real));
     for (int c = 0; c < 3; c++) {
-      generateRandNormal(magnet->randomGenerator, tmp, N + (N % 2), mean, stddev);
+      generateRandNormal(magnet->randomGenerator, tmp, N + 1, mean, stddev);
       cudaMemcpy(noise.device_ptr(c), tmp, N * sizeof(real), cudaMemcpyDeviceToDevice);
     }
     cudaFree(tmp);

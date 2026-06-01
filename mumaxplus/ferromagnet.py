@@ -558,6 +558,7 @@ class Ferromagnet(Magnet):
         """Return seed of the thermal noise generator.
 
         If not set, a random seed is generated based on the current time.
+        Resetting the seed does not reset the generator. Use :func:`reset_noise_generator` instead.
 
         See Also
         --------
