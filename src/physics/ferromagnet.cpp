@@ -92,7 +92,11 @@ Ferromagnet::Ferromagnet(MumaxWorld* world,
 Ferromagnet::~Ferromagnet() {
   curandDestroyGenerator(randomGenerator);
 }
-
+void Ferromagnet::resetNoiseGenerator() {
+  curandDestroyGenerator(randomGenerator);
+  curandCreateGenerator(&randomGenerator, CURAND_RNG_PSEUDO_DEFAULT);
+  curandSetPseudoRandomGeneratorSeed(randomGenerator, thermalSeed);
+}
 const Variable* Ferromagnet::magnetization() const {
   return &magnetization_;
 }

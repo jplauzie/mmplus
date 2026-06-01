@@ -47,8 +47,9 @@ class Ferromagnet : public Magnet {
 
   int getThermalSeed() const { return thermalSeed; }
   void setThermalSeed(int value) { thermalSeed = value;
-                                   curandSetPseudoRandomGeneratorSeed(randomGenerator, value);
+                                   curandSetPseudoRandomGeneratorSeed(randomGenerator, thermalSeed);
                                   }
+  void resetNoiseGenerator();
 
  private:
   NormalizedVariable magnetization_;

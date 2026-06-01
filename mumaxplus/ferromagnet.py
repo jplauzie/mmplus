@@ -545,7 +545,7 @@ class Ferromagnet(Magnet):
         
         See Also
         --------
-        thermal_noise, thermal_seed
+        reset_noise_generator, thermal_noise, thermal_seed
         """
         return Parameter(self._impl.temperature)
 
@@ -561,13 +561,22 @@ class Ferromagnet(Magnet):
 
         See Also
         --------
-        temperature, thermal_noise
+        reset_noise_generator, temperature, thermal_noise
         """
         return self._impl.thermal_seed
 
     @thermal_seed.setter
     def thermal_seed(self, value):
         self._impl.thermal_seed = value
+
+    def reset_noise_generator(self):
+        """Destroys and creates a new noise generator with the existing thermal seed.
+
+        See Also
+        --------
+        temperature, thermal_noise, thermal_seed
+        """
+        self._impl.reset_noise_generator()
 
     @property
     def dmi_tensor(self) -> DmiTensor:
@@ -969,7 +978,7 @@ class Ferromagnet(Magnet):
         
         See Also
         --------
-        temperature, thermal_seed
+        reset_noise_generator, temperature, thermal_seed
         """
         return FieldQuantity(_cpp.thermal_noise(self._impl))
 
