@@ -7,6 +7,11 @@ html[data-theme="dark"] .navbar-brand img {
     display: none;
 }
 
+#install-flowchart {
+    filter: none !important;
+    background-color: transparent !important;
+}
+
 .side-by-side-images {
    display: flex;
    gap: 5%;
