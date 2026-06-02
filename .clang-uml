@@ -26,10 +26,12 @@ diagrams:
     exclude:
       namespaces:
         - std
+      method_types:
+        - constructor
+        - destructor
     plantuml:
       before:
         - '!theme vibrant'
-        - 'left to right direction'
         - 'package Legend {'
         - '  class Class'
         - '  abstract class Abstract'
@@ -80,10 +82,12 @@ diagrams:
     exclude:
       namespaces:
         - std
+      method_types:
+        - constructor
+        - destructor
     plantuml:
       before:
         - '!theme vibrant'
-        - 'left to right direction'
         - 'package Legend {'
         - '  class Class'
         - '  class Visibility {'
@@ -130,10 +134,12 @@ diagrams:
     exclude:
       namespaces:
         - std
+      method_types:
+        - constructor
+        - destructor
     plantuml:
       before:
         - '!theme vibrant'
-        - 'left to right direction'
         - 'package Legend {'
         - '  class Class'
         - '  abstract class Abstract'
@@ -175,10 +181,12 @@ diagrams:
     exclude:
       namespaces:
         - std
+      method_types:
+        - constructor
+        - destructor
     plantuml:
       before:
         - '!theme vibrant'
-        - 'left to right direction'
         - 'package Legend {'
         - '  class Class'
         - '  abstract class Abstract'
@@ -215,10 +223,12 @@ diagrams:
     exclude:
       namespaces:
         - std
+      method_types:
+        - constructor
+        - destructor
     plantuml:
       before:
         - '!theme vibrant'
-        - 'left to right direction'
         - 'package Legend {'
         - '  class Class'
         - '  class Visibility {'
@@ -261,10 +271,12 @@ diagrams:
     exclude:
       namespaces:
         - std
+      method_types:
+        - constructor
+        - destructor
     plantuml:
       before:
         - '!theme vibrant'
-        - 'left to right direction'
         - 'package Legend {'
         - '  class Class'
         - '  abstract class Abstract'
