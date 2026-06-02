@@ -779,11 +779,11 @@ class ObjShape(Shape):
         min_point, max_point = _np.asarray(min_point), _np.asarray(max_point)
 
         mesh = trimesh.load(fname)
-        mesh.apply_scale((max_point - min_point)/(mesh.bounds[1] - mesh.bounds[0]))
-        mesh.apply_translation(min_point - mesh.bounds[0])
         if rotate_z_up: # Rotate Y-up to Z-up (swap Y- and Z-axes)
             rotation_matrix = trimesh.transformations.rotation_matrix(_np.pi/2, [1, 0, 0]) # 90° rotation around X-axis
             mesh.apply_transform(rotation_matrix)
+        mesh.apply_scale((max_point - min_point)/(mesh.bounds[1] - mesh.bounds[0]))
+        mesh.apply_translation(min_point - mesh.bounds[0])
 
         mesh_pv = pv.wrap(mesh) # PyVista provides far more efficient checks than trimesh
 
