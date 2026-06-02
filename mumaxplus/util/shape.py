@@ -775,19 +775,24 @@ class ObjShape(Shape):
             can set `rotate_z_up=True` to rotate your 3D object correctly in
             mumax, where the Z-axis represents the vertical direction.
         """
+        import pyvista as pv
         min_point, max_point = _np.asarray(min_point), _np.asarray(max_point)
 
         mesh = trimesh.load(fname)
         mesh.apply_scale((max_point - min_point)/(mesh.bounds[1] - mesh.bounds[0]))
         mesh.apply_translation(min_point - mesh.bounds[0])
-
         if rotate_z_up: # Rotate Y-up to Z-up (swap Y- and Z-axes)
             rotation_matrix = trimesh.transformations.rotation_matrix(_np.pi/2, [1, 0, 0]) # 90° rotation around X-axis
             mesh.apply_transform(rotation_matrix)
 
+        mesh_pv = pv.wrap(mesh) # PyVista provides far more efficient checks than trimesh
+
         def shape_func(x, y, z):
             x_, y_, z_ = x.flatten(), y.flatten(), z.flatten()
-            bools = trimesh.proximity.signed_distance(mesh, _np.stack([x_,y_,z_], axis=-1)) >= 0
+            points = _np.stack([x_,y_,z_], axis=-1)
+            cloud = pv.PolyData(points)
+            result = cloud.select_interior_points(mesh_pv, check_surface=False)
+            bools = result["selected_points"].astype(bool)
             return _np.reshape(bools, x.shape)
 
         super().__init__(shape_func)
