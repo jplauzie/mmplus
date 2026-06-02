@@ -10,7 +10,9 @@ dependencies = [
   "scipy",
   "matplotlib",
   "pyovf",
-  "tqdm"
+  "tqdm",
+  "trimesh",
+  "rtree"
 ]
 requires-python = ">=3.11"
 authors = [

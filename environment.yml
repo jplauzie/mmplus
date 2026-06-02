@@ -11,6 +11,8 @@ dependencies:
   - numpy
   - cmake=4.0.0
   - scipy
+  - trimesh
+  - rtree
 
   # code checks
   - black

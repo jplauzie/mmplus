@@ -1,6 +1,7 @@
 """Classes for common shapes and their manipulation."""
 
 import numpy as _np
+import trimesh
 from scipy.spatial import Delaunay as _Delaunay
 from matplotlib.path import Path as _Path
 from PIL import Image as _Image
@@ -749,6 +750,45 @@ class ImageShape(Shape):
             row = _np.int32(_np.clip(_np.rint((y1-y)/dy), 0, h-1))
 
             return inside & img_bools[row, col]
+
+        super().__init__(shape_func)
+
+
+# =========================
+# ObjShape
+
+class ObjShape(Shape):
+    def __init__(self, fname: str, min_point: tuple, max_point: tuple, rotate_z_up: bool = False):
+        """Use a .obj file as a shape. The given object is stretched to the
+        given coordinates. The inside of the shape returns True, otherwise False.
+
+        Parameters
+        ----------
+        fname : string
+            Filename of the 3D object to use.
+        min_point : tuple[float] of size 3
+            Smallest x, y and z coordinates of the object's bounding box.
+        max_point : tuple[float] of size 3
+            Largest x, y and z coordinates of the object's bounding box.
+        rotate_z_up : bool
+            If your .obj file uses the Y-axis as the vertical direction, you
+            can set `rotate_z_up=True` to rotate your 3D object correctly in
+            mumax, where the Z-axis represents the vertical direction.
+        """
+        min_point, max_point = _np.asarray(min_point), _np.asarray(max_point)
+
+        mesh = trimesh.load(fname)
+        mesh.apply_scale((max_point - min_point)/(mesh.bounds[1] - mesh.bounds[0]))
+        mesh.apply_translation(min_point - mesh.bounds[0])
+
+        if rotate_z_up: # Rotate Y-up to Z-up (swap Y- and Z-axes)
+            rotation_matrix = trimesh.transformations.rotation_matrix(_np.pi/2, [1, 0, 0]) # 90° rotation around X-axis
+            mesh.apply_transform(rotation_matrix)
+
+        def shape_func(x, y, z):
+            x_, y_, z_ = x.flatten(), y.flatten(), z.flatten()
+            bools = trimesh.proximity.signed_distance(mesh, _np.stack([x_,y_,z_], axis=-1)) >= 0
+            return _np.reshape(bools, x.shape)
 
         super().__init__(shape_func)
 
