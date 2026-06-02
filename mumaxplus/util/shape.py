@@ -788,12 +788,15 @@ class ObjShape(Shape):
         mesh_pv = pv.wrap(mesh) # PyVista provides far more efficient checks than trimesh
 
         def shape_func(x, y, z):
-            x_, y_, z_ = x.flatten(), y.flatten(), z.flatten()
-            points = _np.stack([x_,y_,z_], axis=-1)
+            if hasattr(x, "__iter__"):  # ndarray
+                x_, y_, z_ = x.flatten(), y.flatten(), z.flatten()
+                points = _np.stack([x_,y_,z_], axis=-1)
+            else:
+                points = _np.asarray([[x, y, z]])
             cloud = pv.PolyData(points)
             result = cloud.select_interior_points(mesh_pv, check_surface=False)
             bools = result["selected_points"].astype(bool)
-            return _np.reshape(bools, x.shape)
+            return _np.reshape(bools, x.shape) if hasattr(x, "__iter__") else bools[0]
 
         super().__init__(shape_func)
 
