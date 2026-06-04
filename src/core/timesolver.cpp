@@ -59,7 +59,10 @@ real TimeSolver::sensibleTimeStep() const {
     // with RHS but no noise
     return sensibleFactor() / maxRhs;
   }
-  // negligable RHS compared to noise
+  // negligible RHS compared to noise
+  // valid for small values in the binomial approximation:
+  // sqrt(1 + 4 fR/N²) ≈ 1 + 2 fR/N²
+  // but values still larger than numerical noise (~1e-7)
   real smallNumber = 1e-3;
   if (2 * sensibleFactor() * maxRhs / (maxNoise * maxNoise) < smallNumber) {
     // return solution of dt = sensibleFactor / (maxNoise / sqrt(dt))
