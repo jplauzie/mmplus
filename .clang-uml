@@ -85,6 +85,10 @@ diagrams:
       method_types:
         - constructor
         - destructor
+    layout:
+      Antiferromagnet:
+        - down: HostMagnet
+        - row: [NcAfm, Altermagnet]
     plantuml:
       before:
         - '!theme vibrant'
