@@ -804,7 +804,7 @@ class ObjShape(Shape):
         ## Load the mesh in the correct orientation
         mesh = trimesh.load(fname)
         if repair: trimesh.repair.fill_holes(mesh)
-        if rotate_z_up: # Rotate Y-up to Z-up (swap Y- and Z-axes)
+        if rotate_z_up: # Rotate Y-up to Z-up
             rotation_matrix = trimesh.transformations.rotation_matrix(_np.pi/2, [1, 0, 0]) # 90° rotation around X-axis
             mesh.apply_transform(rotation_matrix)
         mesh_size = mesh.bounds[1] - mesh.bounds[0]
@@ -815,7 +815,7 @@ class ObjShape(Shape):
         if size is not None:
             if scale is not None: raise ValueError("You can either specify 'scale' or 'size', not both at the same time.")
             scale = size / mesh_size
-        if (min_point is None) + (max_point is None) + (center is None) + (scale is None) != 2:
+        if (min_point is not None) + (max_point is not None) + (center is not None) + (scale is not None) != 2:
             raise ValueError("Exactly 2 arguments of 'min_point', 'max_point', 'center' and 'scale'/'size' should be provided.")
         match (min_point, max_point, center, scale): # Reduce parameters to just (min_point, max_point)
             case (_, _, None, None): pass
