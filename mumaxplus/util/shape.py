@@ -170,6 +170,8 @@ class Shape:
         max_point : tuple[float] of size 3
             Largest x, y and z coordinates of the bounding box (exclusive).
         
+        Notes
+        -----
         Setting any coordinate to None will not repeat the shape in this direction.
         """
         for min_p, max_p in zip(min_point, max_point):
@@ -400,8 +402,6 @@ class ZRange(Shape):
 class Torus(Shape):
     def __init__(self, major_diam, minor_diam):
         """Torus with given major and minor diameters.
-        The torus is major_diam + minor_diam wide and minor_diam high.
-        When major_diam = minor_diam, there will be no hole.
     
         Parameters
         ----------
@@ -409,6 +409,11 @@ class Torus(Shape):
             Distance between opposite centers of the tube.
         minor_diam : float
             Diameter of the tube.
+            
+        Notes
+        -----
+        The torus is major_diam + minor_diam wide and minor_diam high.
+        When major_diam = minor_diam, there will be no hole.
         """
         D, d = major_diam, minor_diam
         def shape_func(x, y, z):
