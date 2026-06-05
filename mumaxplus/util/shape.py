@@ -1,7 +1,6 @@
 """Classes for common shapes and their manipulation."""
 
 import numpy as _np
-import trimesh
 from scipy.spatial import Delaunay as _Delaunay
 from matplotlib.path import Path as _Path
 from PIL import Image as _Image
@@ -795,6 +794,7 @@ class ObjShape(Shape):
             mumax, where the Z-axis represents the vertical direction.
         """
         import pyvista as pv # Only attempt import if this shape is used, since this is an optional dependency
+        import trimesh
         
         ## Load the mesh in the correct orientation
         mesh = trimesh.load(fname)
