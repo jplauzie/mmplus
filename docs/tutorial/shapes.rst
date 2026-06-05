@@ -154,6 +154,23 @@ right pixels are mapped to the given x and y coordinates.
    :align: center
    :width: 600px
 
+ObjShape
+**********
+
+A 3D object file (e.g., .obj) can also be used as a shape.
+
+.. code-block:: python
+
+    plotter = pv.Plotter()
+    x = y = z = np.linspace(0, 1e-7, 64)
+    shape = shapes.ObjShape("teapot.obj", (0, 0, 0), (1e-7, 1e-7, 1e-7), keep_aspect=True, rotate_z_up=True)
+    plot_shape_3D(shape, x, y, z, title=shape.__class__.__name__, plotter=plotter)
+    plotter.show()
+
+.. image:: ../images/shapes_3_obj.png
+   :align: center
+   :width: 600px
+
 All shapes are classes in mumaxplus.util.shape, which has been imported as
 "shapes" above. Hence, all built-in shapes can be found by
 
