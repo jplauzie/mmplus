@@ -759,7 +759,7 @@ class ObjShape(Shape):
     def __init__(self, fname: str,
                  min_point: tuple = None, max_point: tuple = None,
                  center: tuple = None, scale: tuple|float = None, size: tuple|float = None,
-                 keep_aspect: bool = False, repair: bool = True, rotate_z_up: bool = False):
+                 keep_aspect: bool = False, repair: bool = False, rotate_z_up: bool = True):
         """Use a .obj file as a shape. Exactly two parameters of (min_point,
         max_point, center, scale, size) must be provided to define the bounding
         box. The object will be stretched to fill that box unless keep_aspect
@@ -779,16 +779,16 @@ class ObjShape(Shape):
             Scaling factor to apply. If a tuple, scaling for each axis.
         size : float or tuple[float] of size 3
             Size of the object's bounding box, in meters. Overrides scale.
-        keep_aspect : bool
+        keep_aspect : bool (default=False)
             If True, the object will fit tightly inside the bounding box
             defined by the previous parameters, but it will not be distorted
             to fill said bounding box completely along all axes. Hence, when
             keep_aspect is True, the values passed to min_point, max_point and
             scale/size may not fully correspond to the resultant bounding box.
-        repair : bool
+        repair : bool (default=False)
             Attempts to interpret the object as a single solid, attempting
             basic repairs in case the mesh is not watertight.
-        rotate_z_up : bool
+        rotate_z_up : bool (default=True)
             If your .obj file uses the Y-axis as the vertical direction, you
             can set `rotate_z_up=True` to rotate your 3D object correctly in
             mumax, where the Z-axis represents the vertical direction.
