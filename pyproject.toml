@@ -34,8 +34,8 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-all = ["mumaxplus[show]"]
-show = ["pyvista[all,trame]"]
+all = ["mumaxplus[3D]"]
+3D = ["pyvista[all,trame]", "trimesh", "networkx", "rtree"]
 
 [dependency-groups] # Installable via "pip install --group dev"
 docs = ["sphinx", "sphinxcontrib-video", "sphinx-copybutton", "sphinx-design", "sphinx-book-theme"]

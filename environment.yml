@@ -27,6 +27,9 @@ dependencies:
   - jupyter
   - ipywidgets
   - pyvista
+  - trimesh
+  - networkx
+  - rtree
   - vtk
   - pillow  # should be contained in matplotlib
   - pandas
