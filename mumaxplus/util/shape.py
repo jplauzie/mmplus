@@ -794,9 +794,9 @@ class ObjShape(Shape):
             Attempts to interpret the object as a single solid, attempting
             basic repairs in case the mesh is not watertight.
         rotate_z_up : bool (default=True)
-            If your .obj file uses the Y-axis as the vertical direction, you
-            can set `rotate_z_up=True` to rotate your 3D object correctly in
-            mumax, where the Z-axis represents the vertical direction.
+            If your .obj file uses the Y-axis as the out-of-plane direction,
+            you can set `rotate_z_up=True` to rotate your 3D object correctly
+            in mumax, where the Z-axis represents the out-of-plane direction.
         """
         import pyvista as pv # Only attempt import if this shape is used, since this is an optional dependency
         import trimesh
