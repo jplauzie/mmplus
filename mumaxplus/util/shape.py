@@ -758,9 +758,14 @@ class ImageShape(Shape):
 # ObjShape
 
 class ObjShape(Shape):
-    def __init__(self, fname: str, min_point: tuple, max_point: tuple, rotate_z_up: bool = False):
-        """Use a .obj file as a shape. The given object is stretched to the
-        given coordinates. The inside of the shape returns True, otherwise False.
+    def __init__(self, fname: str,
+                 min_point: tuple = None, max_point: tuple = None,
+                 center: tuple = None, scale: tuple|float = None, size: tuple|float = None,
+                 keep_aspect: bool = False, rotate_z_up: bool = False):
+        """Use a .obj file as a shape. Exactly two parameters of (min_point,
+        max_point, center, scale, size) must be provided to define the bounding
+        box. The object will be stretched to fill that box unless keep_aspect
+        is True. The inside of the object returns True, otherwise False.
 
         Parameters
         ----------
@@ -770,25 +775,60 @@ class ObjShape(Shape):
             Smallest x, y and z coordinates of the object's bounding box.
         max_point : tuple[float] of size 3
             Largest x, y and z coordinates of the object's bounding box.
+        center : tuple[float] of size 3
+            Center of the object's bounding box.
+        scale : float or tuple[float] of size 3
+            Scaling factor to apply. If a tuple, scaling for each axis.
+        size : float or tuple[float] of size 3
+            Size of the object's bounding box, in meters. Overrides scale.
+        keep_aspect : bool
+            If True, the object will fit tightly inside the bounding box
+            defined by the previous parameters, but it will not be distorted
+            to fill said bounding box completely along all axes. Hence, when
+            keep_aspect is True, the values passed to min_point, max_point and
+            scale/size may not fully correspond to the resultant bounding box.
         rotate_z_up : bool
             If your .obj file uses the Y-axis as the vertical direction, you
             can set `rotate_z_up=True` to rotate your 3D object correctly in
             mumax, where the Z-axis represents the vertical direction.
         """
-        import pyvista as pv
-        min_point, max_point = _np.asarray(min_point), _np.asarray(max_point)
-
+        import pyvista as pv # Only attempt import if this shape is used, since this is an optional dependency
+        
+        ## Load the mesh in the correct orientation
         mesh = trimesh.load(fname)
         if rotate_z_up: # Rotate Y-up to Z-up (swap Y- and Z-axes)
             rotation_matrix = trimesh.transformations.rotation_matrix(_np.pi/2, [1, 0, 0]) # 90° rotation around X-axis
             mesh.apply_transform(rotation_matrix)
+        mesh_size = mesh.bounds[1] - mesh.bounds[0]
+        
+        ## Parse the positioning arguments
+        toarray = lambda arg: _np.asarray(arg) if arg is not None else None
+        min_point, max_point, center, scale, size = toarray(min_point), toarray(max_point), toarray(center), toarray(scale), toarray(size)
+        if size is not None:
+            if scale is not None: raise ValueError("You can either specify 'scale' or 'size', not both at the same time.")
+            scale = size / mesh_size
+        if (min_point is None) + (max_point is None) + (center is None) + (scale is None) != 2:
+            raise ValueError("Exactly 2 arguments of 'min_point', 'max_point', 'center' and 'scale'/'size' should be provided.")
+        match (min_point, max_point, center, scale): # Reduce parameters to just (min_point, max_point)
+            case (_, _, None, None): pass
+            case (None, None, _, _): min_point, max_point = center - scale*mesh_size/2, center + scale*mesh_size/2
+            case (_, None, _, None): max_point = min_point + (center - min_point)*2
+            case (None, _, _, None): min_point = max_point - (max_point - center)*2
+            case (_, None, None, _): max_point = min_point + scale*mesh_size
+            case (None, _, None, _): min_point = max_point - scale*mesh_size
+        if keep_aspect:
+            center = (min_point + max_point)/2
+            scale = min((max_point - min_point)/mesh_size) # Isotropic scaling, defined by smallest factor needed to fit in box
+            min_point, max_point = center - scale*mesh_size/2, center + scale*mesh_size/2
+        
+        ## Move the mesh to the desired position
         mesh.apply_scale((max_point - min_point)/(mesh.bounds[1] - mesh.bounds[0]))
         mesh.apply_translation(min_point - mesh.bounds[0])
 
+        ## Use PyVista mesh in hape_func
         mesh_pv = pv.wrap(mesh) # PyVista provides far more efficient checks than trimesh
-
         def shape_func(x, y, z):
-            if hasattr(x, "__iter__"):  # ndarray
+            if hasattr(x, "__iter__"): # ndarray
                 x_, y_, z_ = x.flatten(), y.flatten(), z.flatten()
                 points = _np.stack([x_,y_,z_], axis=-1)
             else:
