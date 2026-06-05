@@ -12,6 +12,7 @@ dependencies = [
   "pyovf",
   "tqdm",
   "trimesh",
+  "networkx",
   "rtree"
 ]
 requires-python = ">=3.11"

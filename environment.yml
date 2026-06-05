@@ -12,6 +12,7 @@ dependencies:
   - cmake=4.0.0
   - scipy
   - trimesh
+  - networkx
   - rtree
 
   # code checks

@@ -760,7 +760,7 @@ class ObjShape(Shape):
     def __init__(self, fname: str,
                  min_point: tuple = None, max_point: tuple = None,
                  center: tuple = None, scale: tuple|float = None, size: tuple|float = None,
-                 keep_aspect: bool = False, rotate_z_up: bool = False):
+                 keep_aspect: bool = False, repair: bool = True, rotate_z_up: bool = False):
         """Use a .obj file as a shape. Exactly two parameters of (min_point,
         max_point, center, scale, size) must be provided to define the bounding
         box. The object will be stretched to fill that box unless keep_aspect
@@ -786,6 +786,9 @@ class ObjShape(Shape):
             to fill said bounding box completely along all axes. Hence, when
             keep_aspect is True, the values passed to min_point, max_point and
             scale/size may not fully correspond to the resultant bounding box.
+        repair : bool
+            Attempts to interpret the object as a single solid, attempting
+            basic repairs in case the mesh is not watertight.
         rotate_z_up : bool
             If your .obj file uses the Y-axis as the vertical direction, you
             can set `rotate_z_up=True` to rotate your 3D object correctly in
@@ -795,6 +798,7 @@ class ObjShape(Shape):
         
         ## Load the mesh in the correct orientation
         mesh = trimesh.load(fname)
+        if repair: trimesh.repair.fill_holes(mesh)
         if rotate_z_up: # Rotate Y-up to Z-up (swap Y- and Z-axes)
             rotation_matrix = trimesh.transformations.rotation_matrix(_np.pi/2, [1, 0, 0]) # 90° rotation around X-axis
             mesh.apply_transform(rotation_matrix)
