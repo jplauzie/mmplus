@@ -11,7 +11,6 @@ dependencies:
   - numpy
   - cmake=4.0.0
   - scipy
-  - rtree
 
   # code checks
   - black
@@ -31,6 +30,7 @@ dependencies:
   - pyvista
   - trimesh
   - networkx
+  - rtree
   - pillow  # should be contained in matplotlib
   - pandas
   - pip:

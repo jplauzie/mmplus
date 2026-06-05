@@ -10,8 +10,7 @@ dependencies = [
   "scipy",
   "matplotlib",
   "pyovf",
-  "tqdm",
-  "rtree"
+  "tqdm"
 ]
 requires-python = ">=3.11"
 authors = [
@@ -36,7 +35,7 @@ classifiers = [
 
 [project.optional-dependencies]
 all = ["mumaxplus[3D]"]
-3D = ["pyvista[all,trame]", "trimesh", "networkx"]
+3D = ["pyvista[all,trame]", "trimesh", "networkx", "rtree"]
 
 [dependency-groups] # Installable via "pip install --group dev"
 docs = ["sphinx", "sphinxcontrib-video", "sphinx-copybutton", "sphinx-design", "sphinx-book-theme"]
