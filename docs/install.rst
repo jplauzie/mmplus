@@ -33,23 +33,6 @@ If these requirements are fulfilled, the following command will automatically in
 .. note::
    Some optional dependencies of mumax⁺ (e.g., for 3D plotting) are not installed by default to preserve disk space. Replace ``mumaxplus`` in the command above by ``mumaxplus[all]`` to enable all functionality.
 
-.. dropdown:: Alternative: manually downloading and installing a pre-built wheel
-
-   If the automatic installation fails, you can try downloading the appropriate wheel for your system from the `most recent GitHub release <https://github.com/mumax/plus/releases/latest>`_.
-
-   .. tip::
-
-      To check which wheel you should/can download, run ``pip debug -v`` to list all wheel tags that are compatible with your system.
-      If none of these tags match any ``.whl`` filename on the GitHub release page, you will have to install mumax⁺ from source, as described in the next subsection.
-
-   The ``.whl`` you downloaded can then simply be installed in your Python environment with
-
-   .. code-block:: bash
-
-      pip install wheel_name.whl
-
-   All dependencies of mumax⁺ are then automatically installed in that environment.
-
 Option 3: Installing from source
 --------------------------------
 
