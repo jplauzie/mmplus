@@ -30,7 +30,10 @@ void wrap_antiferromagnet(py::module& m) {
       .def_readonly("dmi_tensor", &Antiferromagnet::dmiTensor)
       .def_readonly("dmi_vector", &Antiferromagnet::dmiVector)
 
-      .def("minimize", &Antiferromagnet::minimize, py::arg("tol"), py::arg("nsamples"))
+      .def("minimize", &Antiferromagnet::minimize,
+           py::arg("tol"), py::arg("nsamples"),
+           py::arg("tol_el") = 1e-6, py::arg("nsamples_el") = 10,
+           py::arg("stepsize") = 1e-14, py::arg("stepsize_el") = 1e-14)
       .def("relax", &Antiferromagnet::relax, py::arg("tol"));
       
   m.def("neel_vector",

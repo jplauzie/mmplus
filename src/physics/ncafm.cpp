@@ -42,8 +42,9 @@ const Ferromagnet* NcAfm::sub3() const {
   return &sub3_;
 }
 
-void NcAfm::minimize(real tol, int nSamples) {
-  Minimizer minimizer(this, tol, nSamples);
+void NcAfm::minimize(real tol, int nSamples, real tolEl, int nSamplesEl,
+                           real stepsize, real stepsizeEl) {
+  Minimizer minimizer(this, tol, nSamples, tolEl, nSamplesEl, stepsize, stepsizeEl);
   minimizer.exec();
 }
 

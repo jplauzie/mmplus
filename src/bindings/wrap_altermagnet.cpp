@@ -37,7 +37,10 @@ void wrap_altermagnet(py::module& m) {
       .def_readonly("dmi_tensor", &Altermagnet::dmiTensor)
       .def_readonly("dmi_vector", &Altermagnet::dmiVector)
 
-      .def("minimize", &Altermagnet::minimize, py::arg("tol"), py::arg("nsamples"))
+      .def("minimize", &Altermagnet::minimize,
+           py::arg("tol"), py::arg("nsamples"),
+           py::arg("tol_el") = 1e-6, py::arg("nsamples_el") = 10,
+           py::arg("stepsize") = 1e-14, py::arg("stepsize_el") = 1e-14)
       .def("relax", &Altermagnet::relax, py::arg("tol"));
       
   m.def("neel_vector",

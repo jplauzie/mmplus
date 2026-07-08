@@ -74,8 +74,11 @@ void wrap_ferromagnet(py::module& m) {
       .def_readonly("B2", &Ferromagnet::B2)
       
       .def("reset_noise_generator", &Ferromagnet::resetNoiseGenerator)
-      .def("minimize", &Ferromagnet::minimize, py::arg("tol"), py::arg("nsamples"))
-      .def("relax", &Ferromagnet::relax, py::arg("tol"));
+      .def("minimize", &Ferromagnet::minimize,
+           py::arg("tol"), py::arg("nsamples"),
+           py::arg("tol_el") = 1e-6, py::arg("nsamples_el") = 10,
+           py::arg("stepsize") = 1e-14, py::arg("stepsize_el") = 1e-14)    
+     .def("relax", &Ferromagnet::relax, py::arg("tol"));
 
   m.def("torque", &torqueQuantity);
   m.def("llg_torque", &llgTorqueQuantity);

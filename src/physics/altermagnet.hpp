@@ -34,7 +34,9 @@ class Altermagnet : public HostMagnet {
  const Ferromagnet* sub1() const;
  const Ferromagnet* sub2() const;
  
- void minimize(real tol = 1e-6, int nSamples = 20);
+ void minimize(real tol = 1e-6, int nSamples = 20,
+              real tolEl = 1e-6, int nSamplesEl = 10,
+              real stepsize = 1e-14, real stepsizeEl = 1e-14);
  void relax(real tol);
 
  // Anisotropic exchange constant

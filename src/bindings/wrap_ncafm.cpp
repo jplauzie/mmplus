@@ -31,7 +31,10 @@ void wrap_ncafm(py::module& m) {
       .def_readonly("dmi_tensor", &NcAfm::dmiTensor)
       .def_readonly("dmi_vector", &NcAfm::dmiVector)
 
-      .def("minimize", &NcAfm::minimize, py::arg("tol"), py::arg("nsamples"))
+      .def("minimize", &NcAfm::minimize,
+           py::arg("tol"), py::arg("nsamples"),
+           py::arg("tol_el") = 1e-6, py::arg("nsamples_el") = 10,
+           py::arg("stepsize") = 1e-14, py::arg("stepsize_el") = 1e-14)
       .def("relax", &NcAfm::relax, py::arg("tol"));
 
   m.def("octupole_vector", &octupoleVectorQuantity);

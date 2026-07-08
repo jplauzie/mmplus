@@ -118,11 +118,16 @@ class Altermagnet(Magnet):
         self.sub1.enable_demag = value
         self.sub2.enable_demag = value
 
-    def minimize(self, tol=1e-6, nsamples=20):
+    def minimize(self, tol=1e-6, nsamples=20, tol_el=1e-6, nsamples_el=10):
         """Minimize the total energy.
 
         Fast energy minimization, but less robust than :func:`relax`
         when starting from a high energy state.
+
+        If elastodynamics is enabled, this simultaneously minimizes the
+        elastic displacement towards mechanical equilibrium (vanishing
+        effective body force), using its own independent convergence
+        check against `tol_el`/`nsamples_el`.
 
         Parameters
         ----------
@@ -133,12 +138,20 @@ class Altermagnet(Magnet):
         nsamples : int (default=20)
             The number of consecutive magnetization evaluations that must not
             differ by more than the tolerance "tol".
+        tol_el : int / float (default=1e-6)
+            The maximum allowed difference between consecutive elastic
+            displacement evaluations when advancing toward mechanical
+            equilibrium. Ignored if elastodynamics is disabled.
+        nsamples_el : int (default=10)
+            The number of consecutive elastic displacement evaluations that
+            must not differ by more than the tolerance "tol_el". Ignored if
+            elastodynamics is disabled.
 
         See Also
         --------
         relax
         """
-        self._impl.minimize(tol, nsamples)
+        self._impl.minimize(tol, nsamples, tol_el, nsamples_el)
 
     def relax(self, tol=1e-9):
         """Relax the state to an energy minimum.

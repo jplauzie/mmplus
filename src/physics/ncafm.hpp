@@ -34,7 +34,9 @@ class NcAfm : public HostMagnet {
  const Ferromagnet* sub2() const;
  const Ferromagnet* sub3() const;
 
- void minimize(real tol = 1e-6, int nsamples = 30);
+void minimize(real tol = 1e-6, int nSamples = 30,
+              real tolEl = 1e-6, int nSamplesEl = 10,
+              real stepsize = 1e-14, real stepsizeEl = 1e-14);
  void relax(real tol);
 
  private:

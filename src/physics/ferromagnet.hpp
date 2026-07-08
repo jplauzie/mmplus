@@ -42,7 +42,9 @@ class Ferromagnet : public Magnet {
 
   const HostMagnet* hostMagnet() const { return hostMagnet_; }
 
-  void minimize(real tol = 1e-6, int nSamples = 10);
+  void minimize(real tol = 1e-6, int nSamples = 10,
+              real tolEl = 1e-6, int nSamplesEl = 10,
+              real stepsize = 1e-14, real stepsizeEl = 1e-14);
   void relax(real tol);
 
   int getThermalSeed() const { return thermalSeed; }

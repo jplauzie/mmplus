@@ -94,7 +94,9 @@ class MumaxWorld : public World {
   const std::map<std::string, NcAfm*> ncafms() const;
 
   /** Minimize the current energy state of the world with every magnet in it. */
-  void minimize(real tol = 1e-6, int nSamples = 10);
+  void minimize(real tol = 1e-6, int nSamples = 10,
+              real tolEl = 1e-6, int nSamplesEl = 10,
+              real stepsize = 1e-14, real stepsizeEl = 1e-14);
   /** Relax the current state of the world with every magnet in it. */
   void relax(real tol);
   real RelaxTorqueThreshold;
