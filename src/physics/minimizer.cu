@@ -144,8 +144,9 @@ void Minimizer::exec() {
   nsteps_ = 0;
   lastMagDiffs_.clear();
   lastElDiffs_.clear();
-  const int maxSteps = 1000;  // TODO: make configurable if this isn't enough
+  const int maxSteps = 10000;  // TODO: make configurable if this isn't enough
   const int printEvery = 50;    // tweak: smaller = more frequent updates
+  std::cerr << "[minimize] exec() called, maxSteps=" << maxSteps << std::endl;
 
   while (!converged() && nsteps_ < maxSteps) {
     step();
@@ -400,11 +401,18 @@ bool Minimizer::converged() const {
     if (lastMagDiffs_.size() < nMagDiffSamples_)
       magConverged = false;
     else
-      for (auto dm : lastMagDiffs_)
+      for (auto dm : lastMagDiffs_) {
+        if (std::isnan(dm) || std::isinf(dm)) {
+          std::cerr << "[minimize] NaN/Inf in magDiff at step " << nsteps_
+                     << " (dm=" << dm << ")" << std::endl;
+          magConverged = false;
+          break;
+        }
         if (dm > stopMaxMagDiff_) {
           magConverged = false;
           break;
         }
+      }
   }
 
   bool elConverged = true;
@@ -412,11 +420,18 @@ bool Minimizer::converged() const {
     if (lastElDiffs_.size() < nElDiffSamples_)
       elConverged = false;
     else
-      for (auto du : lastElDiffs_)
+      for (auto du : lastElDiffs_) {
+        if (std::isnan(du) || std::isinf(du)) {
+          std::cerr << "[minimize] NaN/Inf in elDiff at step " << nsteps_
+                     << " (du=" << du << ")" << std::endl;
+          elConverged = false;
+          break;
+        }
         if (du > stopMaxElDiff_) {
           elConverged = false;
           break;
         }
+      }
   }
 
   return magConverged && elConverged;

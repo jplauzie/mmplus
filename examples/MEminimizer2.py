@@ -74,7 +74,7 @@ STEPSIZE_EL = 1e-30  # initial elastic BB stepsize (only used as the very
                      # this quickly regardless of the exact starting value)
 
 DYNAMICS_TIME = 5e-10  # 500 ps warm-up run before minimize, matches mumax3 test
-FIXED_DT = 5e-15       # matches mumax3 test's fixdt
+FIXED_DT = 1e-15       # matches mumax3 test's fixdt
 
 # ----- geometry: matches mumax3 Go test script -----
 dx, dy, dz = 4e-9, 4e-9, 1e-9
@@ -86,9 +86,9 @@ grid = Grid((nx, ny, nz))
 # No mastergrid/pbc_repetitions here -- see module docstring for why.
 world = World(cellsize)
 
-circles=shapes.Circle(30e-9) - shapes.Circle(15e-9)
+circles=shapes.Circle(100e-9) - shapes.Circle(50e-9)
 
-circles=circles.translate(30e-9 / 2, 30e-9 / 2, 0)
+circles=circles.translate(100e-9 / 2, 100e-9 / 2, 0)
 
 magnet = Ferromagnet(
     world,
@@ -157,7 +157,7 @@ print(f"Dynamics done. Total wall time: {time.time() - start_time:.2f} s")
 
 # combined magnetic + elastic minimize
 print("Minimizing...")
-magnet.minimize(TOL, NSAMPLES, TOL_EL, NSAMPLES_EL, STEPSIZE, STEPSIZE_EL)
+#magnet.minimize(TOL, NSAMPLES, TOL_EL, NSAMPLES_EL, STEPSIZE, STEPSIZE_EL)
 print("Done.")
 
 # ----- gather final fields -----
