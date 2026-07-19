@@ -143,7 +143,7 @@ class Ferromagnet(Magnet):
         self.bias_magnetic_field.set(value)
 
     def minimize(self, tol=1e-6, nsamples=10, tol_el=1e-6, nsamples_el=10,
-             stepsize=1e-14, stepsize_el=1e-14):
+                stepsize_el=1e-14, stepsize_el_fallback=1e-30):
         """Minimize the total energy.
 
         Fast energy minimization, but less robust than :func:`relax`
@@ -175,7 +175,8 @@ class Ferromagnet(Magnet):
         --------
         relax
         """
-        self._impl.minimize(tol, nsamples, tol_el, nsamples_el, stepsize, stepsize_el)
+        self._impl.minimize(tol, nsamples, tol_el, nsamples_el,
+                            stepsize_el, stepsize_el_fallback)
     
     def relax(self, tol=1e-9):
         """Relax the state to an energy minimum.

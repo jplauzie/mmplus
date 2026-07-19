@@ -35,7 +35,7 @@ class Antiferromagnet : public HostMagnet {
  
  void minimize(real tol = 1e-6, int nSamples = 20,
               real tolEl = 1e-6, int nSamplesEl = 10,
-              real stepsize = 1e-14, real stepsizeEl = 1e-14);
+              real stepsizeEl = 1e-14, real stepsizeElFallback = 1e-30);
  void relax(real tol);
 
  private:

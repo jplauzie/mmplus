@@ -27,21 +27,21 @@ class Minimizer {
             int nMagDiffSamples,
             real stopMaxElDiff,
             int nElDiffSamples,
-            real stepsize = 1e-14, real stepsizeEl = 1e-14);
+            real stepsizeEl = 1e-14, real stepsizeElFallback = 1e-30);
 
   Minimizer(const HostMagnet* magnet,
             real stopMaxMagDiff,
             int nMagDiffSamples,
             real stopMaxElDiff,
             int nElDiffSamples,
-            real stepsize = 1e-14, real stepsizeEl = 1e-14);
+            real stepsizeEl = 1e-14, real stepsizeElFallback = 1e-30);
 
   Minimizer(const MumaxWorld* world,
             real stopMaxMagDiff,
             int nMagDiffSamples,
             real stopMaxElDiff,
             int nElDiffSamples,
-            real stepsize = 1e-14, real stepsizeEl = 1e-14);
+            real stepsizeEl = 1e-14, real stepsizeElFallback = 1e-30);
 
   void exec();
 
@@ -61,7 +61,7 @@ class Minimizer {
   std::deque<real> lastMagDiffs_;
   size_t nMagDiffSamples_;
   real stopMaxMagDiff_;
-  real stepsizeInit_;    
+   
 
   // --- elastic part ---
   // One entry per independent Ferromagnet or per HostMagnet (AFM/NcAfm), not sublattice
@@ -72,7 +72,8 @@ class Minimizer {
   std::deque<real> lastElDiffs_;
   size_t nElDiffSamples_;
   real stopMaxElDiff_;
-  real stepsizeElInit_;  
+  real stepsizeElInit_;
+  real stepsizeElFallback_; 
 
   int nsteps_;
 };

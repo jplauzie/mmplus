@@ -26,27 +26,23 @@ void addElasticIfPresent(const Magnet* magnet,
   }
 }
 
-}  // namespace
+} 
 
 Minimizer::Minimizer(const Ferromagnet* magnet,
                      real stopMaxMagDiff,
                      int nMagDiffSamples,
                      real stopMaxElDiff,
                      int nElDiffSamples,
-                     real stepsize,
-                     real stepsizeEl)
+                     real stepsizeEl,
+                     real stepsizeElFallback)
     : magnets_({magnet}),
       torques_({relaxTorqueQuantity(magnet)}),
       nMagDiffSamples_(nMagDiffSamples),
       stopMaxMagDiff_(stopMaxMagDiff),
       nElDiffSamples_(nElDiffSamples),
       stopMaxElDiff_(stopMaxElDiff),
-      t0(1),
-      t1(1),
-      m0(1),
-      m1(1) {
-  stepsizes_ = {stepsize};
-  stepsizeInit_ = stepsize;
+      t0(1), t1(1), m0(1), m1(1) {
+  stepsizes_ = {1e-14};  
 
   addElasticIfPresent(magnet, elMagnets_, forces_);
   f0.resize(elMagnets_.size());
@@ -55,8 +51,8 @@ Minimizer::Minimizer(const Ferromagnet* magnet,
   u1.resize(elMagnets_.size());
   elStepsizes_.assign(elMagnets_.size(), stepsizeEl);
   stepsizeElInit_ = stepsizeEl;
-  // TODO: figure out how to make descent guess
-  // TODO: check if input arguments are sane
+  stepsizeElFallback_ = stepsizeElFallback;
+  
 }
 
 Minimizer::Minimizer(const HostMagnet* magnet,
@@ -64,8 +60,8 @@ Minimizer::Minimizer(const HostMagnet* magnet,
                      int nMagDiffSamples,
                      real stopMaxElDiff,
                      int nElDiffSamples,
-                     real stepsize,
-                     real stepsizeEl)
+                     real stepsizeEl,
+                     real stepsizeElFallback)
     : magnets_(magnet->sublattices()),
       nMagDiffSamples_(nMagDiffSamples),
       stopMaxMagDiff_(stopMaxMagDiff),
@@ -75,12 +71,12 @@ Minimizer::Minimizer(const HostMagnet* magnet,
       t1(magnets_.size()),
       m0(magnets_.size()),
       m1(magnets_.size()) {
-  stepsizes_.assign(magnets_.size(), stepsize);
-  stepsizeInit_ = stepsize;
+  stepsizes_.assign(magnets_.size(), 1e-14);
+  
   for (auto sub : magnets_)
     torques_.push_back(relaxTorqueQuantity(sub));
 
-  // Elastic displacement lives on the host, not per sublattice.
+  
   addElasticIfPresent(magnet, elMagnets_, forces_);
   f0.resize(elMagnets_.size());
   f1.resize(elMagnets_.size());
@@ -88,6 +84,7 @@ Minimizer::Minimizer(const HostMagnet* magnet,
   u1.resize(elMagnets_.size());
   elStepsizes_.assign(elMagnets_.size(), stepsizeEl);
   stepsizeElInit_ = stepsizeEl;
+  stepsizeElFallback_ = stepsizeElFallback;
 }
 
 Minimizer::Minimizer(const MumaxWorld* world,
@@ -95,8 +92,8 @@ Minimizer::Minimizer(const MumaxWorld* world,
                      int nMagDiffSamples,
                      real stopMaxElDiff,
                      int nElDiffSamples,
-                     real stepsize,
-                     real stepsizeEl)
+                     real stepsizeEl,
+                     real stepsizeElFallback)
     : nMagDiffSamples_(0),  // set below, once N is known
       stopMaxMagDiff_(stopMaxMagDiff),
       nElDiffSamples_(0),  // set below, once elMagnets_ is known
@@ -127,8 +124,7 @@ Minimizer::Minimizer(const MumaxWorld* world,
   for (auto magnet : magnets_)
     torques_.push_back(relaxTorqueQuantity(magnet));
 
-  stepsizes_.assign(N, stepsize);
-  stepsizeInit_ = stepsize;
+  stepsizes_.assign(N, 1e-14);
 
   nElDiffSamples_ = nElDiffSamples * elMagnets_.size();
   f0.resize(elMagnets_.size());
@@ -137,6 +133,7 @@ Minimizer::Minimizer(const MumaxWorld* world,
   u1.resize(elMagnets_.size());
   elStepsizes_.assign(elMagnets_.size(), stepsizeEl);
   stepsizeElInit_ = stepsizeEl;
+  stepsizeElFallback_ = stepsizeElFallback;
 }
 
 
@@ -144,20 +141,20 @@ void Minimizer::exec() {
   nsteps_ = 0;
   lastMagDiffs_.clear();
   lastElDiffs_.clear();
-  const int maxSteps = 1000;  // TODO: make configurable if this isn't enough
-  const int printEvery = 50;    // tweak: smaller = more frequent updates
+
+  bool magnetoelasticsActive = !elMagnets_.empty();
+
+  if (!magnetoelasticsActive) {
+    while (!converged())
+      step();
+    return;
+  }
+
+  const int maxSteps = 2000000;  // TODO: make configurable if this isn't enough. maybe not needed anymore?
+  
 
   while (!converged() && nsteps_ < maxSteps) {
     step();
-
-    if (nsteps_ % printEvery == 0) {
-      real lastMagDiff = lastMagDiffs_.empty() ? -1 : lastMagDiffs_.back();
-      real lastElDiff = lastElDiffs_.empty() ? -1 : lastElDiffs_.back();
-      std::cerr << "[minimize] step " << nsteps_
-                << "  magDiff=" << lastMagDiff
-                << "  elDiff=" << lastElDiff
-                << std::endl;
-    }
   }
 
   if (nsteps_ >= maxSteps)
@@ -182,13 +179,7 @@ __global__ void k_step(CuField mField,
   mField.setVectorInCell(idx, m);
 }
 
-// Plain steepest-descent step for the elastic displacement. Unlike
-// magnetization, displacement has no unit-length constraint, so there is no
-// Cayley-type renormalizing update here -- just u1 = u0 + dt * f.
-// NOTE: assumes no pinning / fixed-volume projection (not yet implemented
-// upstream). If/when those land, and if they are enforced at the force level
-// (e.g. by zeroing the effective body force at pinned cells, mirroring how
-// frozen_spins zeroes torque), this kernel needs no changes at all.
+
 __global__ void k_stepElastic(CuField uField,
                               const CuField u0Field,
                               const CuField forceField,
@@ -204,7 +195,7 @@ __global__ void k_stepElastic(CuField uField,
   uField.setVectorInCell(idx, u0 + dt * f);
 }
 
-static inline real BarzilianBorweinStepSize(Field& dm, Field& dtorque, int n, real fallback) {
+static inline real BarzilianBorweinStepSize(Field& dm, Field& dtorque, int n) {
   real nom, div;
   if (n % 2 == 0) {
     nom = dotSum(dm, dm);
@@ -213,23 +204,10 @@ static inline real BarzilianBorweinStepSize(Field& dm, Field& dtorque, int n, re
     nom = dotSum(dm, dtorque);
     div = dotSum(dtorque, dtorque);
   }
-
   if (div == 0.0)
-    return fallback;
+    return 1e-14;  // TODO: figure out safe stepsize
 
-  real h = nom / div;
-
-  if (!(h > 0.0) || std::isnan(h) || std::isinf(h))
-    return fallback;
-
-  // Heuristic upper bound: don't let a single bad curvature estimate produce
-  // a step size wildly larger than the known-stable fallback scale. The
-  // multiplier is a tuning knob, not physically derived.
-  const real maxGrowthFactor = 10.0;
-  if (h > maxGrowthFactor * fallback)
-    h = maxGrowthFactor * fallback;
-
-  return h;
+  return nom / div;
 }
 
 void Minimizer::stepMagnetic() {
@@ -258,7 +236,7 @@ void Minimizer::stepMagnetic() {
     Field dm = add(real(+1), m1[i], real(-1), m0[i]);
     Field dt = add(real(-1), t1[i], real(+1), t0[i]);  // TODO: check sign difference
 
-    stepsizes_[i] = BarzilianBorweinStepSize(dm, dt, nsteps_, stepsizeInit_);
+    stepsizes_[i] = BarzilianBorweinStepSize(dm, dt, nsteps_);
 
     addMagDiff(maxVecNorm(dm));
   }
@@ -273,33 +251,7 @@ void Minimizer::stepElastic() {
     else
       f0[i] = f1[i];
 
-    real qnorm = maxVecNorm(f0[i]);
-
-    // Clamp so a single step never moves displacement more than 10% of the
-    // smallest cellsize -- a physically meaningful bound, not a numeric guess.
-    real3 cs = elMagnets_[i]->system()->cellsize();
-    real minCellSize = std::min({cs.x, cs.y, cs.z});
-    real maxDu = real(0.1) * minCellSize;
-
     real h = elStepsizes_[i];
-    real hBeforeClamp = h;
-    bool clamped = false;
-    if (qnorm > 0) {
-      real step = h * qnorm;
-      if (step > maxDu) {
-        h *= maxDu / step;
-        clamped = true;
-      }
-    }
-    elStepsizes_[i] = h;
-
-    std::cerr << "[elastic] step=" << nsteps_
-              << " i=" << i
-              << " h_pre=" << hBeforeClamp
-              << " h_post=" << h
-              << " clamped=" << clamped
-              << " |f|=" << qnorm
-              << std::endl;
 
     u1[i] = Field(elMagnets_[i]->system(), 3);
     int ncells = u1[i].grid().ncells();
@@ -313,74 +265,63 @@ void Minimizer::stepElastic() {
 
   for (size_t i = 0; i < elMagnets_.size(); i++) {
     Field du = add(real(+1), u1[i], real(-1), u0[i]);
-
-    // For BB purposes we need a gradient-like quantity, and force = -gradient.
-    // Near a stable equilibrium (f ~ -K*u), f1-f0 is *always* anti-correlated
-    // with du (dot(du, f1-f0) < 0 for any positive-definite K), which is why
-    // every step here was landing on a negative/degenerate step size and
-    // falling back to the floor. Using dg = f0-f1 = -(f1-f0) restores the
-    // sign BB expects, matching the reversed convention already used for
-    // torque (t0-t1) in stepMagnetic().
     Field dg = add(real(-1), f1[i], real(+1), f0[i]);
 
     real maxDu = maxVecNorm(du);
     real maxDg = maxVecNorm(dg);
-    real duScale = (maxDu > 0) ? real(1.0) / maxDu : real(1.0);
-    real dgScale = (maxDg > 0) ? real(1.0) / maxDg : real(1.0);
+    real duScale;
+    if (maxDu > 0) {
+      duScale = real(1.0) / maxDu;
+    } else {
+      duScale = real(1.0);
+    }
 
-    Field duScaled = duScale * du;
-    Field dgScaled = dgScale * dg;
+    real dgScale;
+    if (maxDg > 0) {
+      dgScale = real(1.0) / maxDg;
+    } else {
+      dgScale = real(1.0);
+    }
 
-    // Exact, since Dot(a*k, b*k) = k^2 * Dot(a,b) -- dividing back out
-    // recovers the true unscaled dot product without ever squaring/
-    // multiplying raw quantities that are many orders of magnitude apart.
-    real dudu = dotSum(duScaled, duScaled) / (duScale * duScale);
-    real dudg = dotSum(duScaled, dgScaled) / (duScale * dgScale);
-    real dgdg = dotSum(dgScaled, dgScaled) / (dgScale * dgScale);
 
-    std::cerr << "[elastic] step=" << nsteps_
-              << " i=" << i
-              << " max_du=" << maxDu
-              << " duScale=" << duScale
-              << " dgScale=" << dgScale
-              << " dot(du,du)=" << dudu
-              << " dot(du,dg)=" << dudg
-              << " dot(dg,dg)=" << dgdg
-              << std::endl;
+    // du += (duScale-1)*du  ==>  du = duScale*du
+    addTo(du, duScale - real(1.0), du);  
+    addTo(dg, dgScale - real(1.0), dg); 
+    
+
+    // scaling trick to avoid float32 underflow issues in dudu kernel
+    real dudu = dotSum(du, du) / (duScale * duScale);
+    real dudg = dotSum(du, dg) / (duScale * dgScale);
+    real dgdg = dotSum(dg, dg) / (dgScale * dgScale);
 
     real nom, div;
-    bool usedFallback = false;
+    
     if (nsteps_ % 2 == 0) {
+      //BB1
       nom = dudu;
       div = dudg;
+      // safety, if BB1 fails, use BB2. Shouldn't be necessary with scaling trick
       if (nom == 0.0) {
-        std::cerr << "[elastic] WARNING: BB1 underflow at step=" << nsteps_
-                   << " i=" << i << " (dot(du,du)=0), falling back to BB2"
-                   << std::endl;
         nom = dudg;
         div = dgdg;
-        usedFallback = true;
       }
     } else {
+      //BB2
       nom = dudg;
       div = dgdg;
     }
 
-    if (div == 0.0) {
-      std::cerr << "[elastic] WARNING: step-size denominator underflow at step="
-                 << nsteps_ << " i=" << i << " (div=0)"
-                 << (usedFallback ? " [after BB1 fallback]" : "")
-                 << std::endl;
+    //shouldn't be necessary anymore
+    if (div != 0.0) {
+      real newHstep = nom / div;
+      if (!std::isnan(newHstep) && !std::isinf(newHstep))
+        elStepsizes_[i] = newHstep;
+      else
+      // newH somehow nan or inf? fallback
+        elStepsizes_[i] = stepsizeElFallback_;
     } else {
-      real newH = nom / div;
-      if (newH > 0.0 && !std::isnan(newH) && !std::isinf(newH)) {
-        elStepsizes_[i] = newH;
-      } else {
-        std::cerr << "[elastic] WARNING: negative/degenerate step size at step="
-                   << nsteps_ << " i=" << i << " (newH=" << newH
-                   << "), keeping previous h=" << elStepsizes_[i]
-                   << std::endl;
-      }
+      //div somehow zero? fallback
+      elStepsizes_[i] = stepsizeElFallback_;
     }
 
     addElDiff(maxDu);
@@ -394,6 +335,7 @@ void Minimizer::step() {
   nsteps_ += 1;
 }
 
+//require convergence for both magnetic and elastic parts, if present
 bool Minimizer::converged() const {
   bool magConverged = true;
   if (!magnets_.empty()) {

@@ -96,7 +96,7 @@ class MumaxWorld : public World {
   /** Minimize the current energy state of the world with every magnet in it. */
   void minimize(real tol = 1e-6, int nSamples = 10,
               real tolEl = 1e-6, int nSamplesEl = 10,
-              real stepsize = 1e-14, real stepsizeEl = 1e-14);
+              real stepsizeEl = 1e-14, real stepsizeElFallback = 1e-30);
   /** Relax the current state of the world with every magnet in it. */
   void relax(real tol);
   real RelaxTorqueThreshold;
