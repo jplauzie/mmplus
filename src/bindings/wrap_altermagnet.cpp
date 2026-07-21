@@ -39,8 +39,8 @@ void wrap_altermagnet(py::module& m) {
 
       .def("minimize", &Altermagnet::minimize,
            py::arg("tol"), py::arg("nsamples"),
-           py::arg("tol_el") = 1e-6, py::arg("nsamples_el") = 10,
-           py::arg("stepsize_el") = 1e-14, py::arg("stepsize_el_fallback") = 1e-30)
+           py::arg("tol_el") = 1e-14, py::arg("nsamples_el") = 10,
+           py::arg("stepsize_el") = 1e-30, py::arg("stepsize_el_fallback") = 1e-30)
       .def("relax", &Altermagnet::relax, py::arg("tol"));
       
   m.def("neel_vector",

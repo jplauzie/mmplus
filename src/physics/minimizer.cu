@@ -19,10 +19,12 @@ namespace {
 // three constructors so the "assuredZero" filter only lives in one place.
 void addElasticIfPresent(const Magnet* magnet,
                          std::vector<const Magnet*>& elMagnets,
-                         std::vector<M_FieldQuantity>& forces) {
+                         std::vector<M_FieldQuantity>& forces,
+                         std::vector<RigidBodyGeometry>& rigidGeoms) {
   if (!elasticityAssuredZero(magnet)) {
     elMagnets.push_back(magnet);
     forces.push_back(effectiveBodyForceQuantity(magnet));
+    rigidGeoms.push_back(computeRigidBodyGeometry(magnet->system()));
   }
 }
 
@@ -44,7 +46,7 @@ Minimizer::Minimizer(const Ferromagnet* magnet,
       t0(1), t1(1), m0(1), m1(1) {
   stepsizes_ = {1e-14};  
 
-  addElasticIfPresent(magnet, elMagnets_, forces_);
+    addElasticIfPresent(magnet, elMagnets_, forces_, rigidGeoms_);
   f0.resize(elMagnets_.size());
   f1.resize(elMagnets_.size());
   u0.resize(elMagnets_.size());
@@ -77,7 +79,7 @@ Minimizer::Minimizer(const HostMagnet* magnet,
     torques_.push_back(relaxTorqueQuantity(sub));
 
   
-  addElasticIfPresent(magnet, elMagnets_, forces_);
+  addElasticIfPresent(magnet, elMagnets_, forces_, rigidGeoms_);
   f0.resize(elMagnets_.size());
   f1.resize(elMagnets_.size());
   u0.resize(elMagnets_.size());
@@ -118,7 +120,7 @@ Minimizer::Minimizer(const MumaxWorld* world,
     // independent Ferromagnet or per HostMagnet (AFM/NcAfm), never per
     // sublattice, so this check happens once per world->magnets() entry
     // regardless of how many magnetic sublattices it owns.
-    addElasticIfPresent(mag, elMagnets_, forces_);
+        addElasticIfPresent(mag, elMagnets_, forces_, rigidGeoms_);
   }
 
   for (auto magnet : magnets_)
@@ -150,12 +152,23 @@ void Minimizer::exec() {
     return;
   }
 
-  const int maxSteps = 2000000;  // TODO: make configurable if this isn't enough. maybe not needed anymore?
+  const int maxSteps = 20000;  // TODO: make configurable if this isn't enough. maybe not needed anymore?
   
 
   while (!converged() && nsteps_ < maxSteps) {
     step();
   }
+
+  std::cerr << "Minimizer: converged after " << nsteps_ << " steps "
+            << "(mag samples=" << lastMagDiffs_.size()
+            << ", el samples=" << lastElDiffs_.size() << ")" << std::endl;
+
+  real finalMagDiff = lastMagDiffs_.empty() ? real(-1) : lastMagDiffs_.back();
+  real finalElDiff = lastElDiffs_.empty() ? real(-1) : lastElDiffs_.back();
+  std::cerr << "  final maxMagDiff=" << finalMagDiff
+            << "  final maxElDiff=" << finalElDiff
+            << "  (thresholds: " << stopMaxMagDiff_ << ", " << stopMaxElDiff_ << ")"
+            << std::endl;
 
   if (nsteps_ >= maxSteps)
     std::cerr << "Warning: Minimizer did not converge after " << maxSteps << " steps." << std::endl;
@@ -255,7 +268,10 @@ void Minimizer::stepElastic() {
 
     u1[i] = Field(elMagnets_[i]->system(), 3);
     int ncells = u1[i].grid().ncells();
+    //removeRigidBodyModes(u0[i], rigidGeoms_[i]);
+    //removeRigidBodyModes(u1[i], rigidGeoms_[i]);
     cudaLaunch(ncells, k_stepElastic, u1[i].cu(), u0[i].cu(), f0[i].cu(), h);
+    removeRigidBodyModes(u1[i], rigidGeoms_[i]);
   }
 
   for (size_t i = 0; i < elMagnets_.size(); i++)
@@ -265,6 +281,7 @@ void Minimizer::stepElastic() {
 
   for (size_t i = 0; i < elMagnets_.size(); i++) {
     Field du = add(real(+1), u1[i], real(-1), u0[i]);
+    //removeRigidBodyModes(du, rigidGeoms_[i]);
     Field dg = add(real(-1), f1[i], real(+1), f0[i]);
 
     real maxDu = maxVecNorm(du);
@@ -284,9 +301,8 @@ void Minimizer::stepElastic() {
     }
 
 
-    // du += (duScale-1)*du  ==>  du = duScale*du
-    addTo(du, duScale - real(1.0), du);  
-    addTo(dg, dgScale - real(1.0), dg); 
+    du = duScale * du;   // uses fieldops.hpp's operator*(real, const Field&)
+    dg = dgScale * dg;
     
 
     // scaling trick to avoid float32 underflow issues in dudu kernel
@@ -295,13 +311,14 @@ void Minimizer::stepElastic() {
     real dgdg = dotSum(dg, dg) / (dgScale * dgScale);
 
     real nom, div;
-    
+    bool usedFallbackForBB1 = false;
     if (nsteps_ % 2 == 0) {
       //BB1
       nom = dudu;
       div = dudg;
       // safety, if BB1 fails, use BB2. Shouldn't be necessary with scaling trick
       if (nom == 0.0) {
+        usedFallbackForBB1 = true;
         nom = dudg;
         div = dgdg;
       }
@@ -312,19 +329,39 @@ void Minimizer::stepElastic() {
     }
 
     //shouldn't be necessary anymore
+    bool hitFallback = (div == 0.0);
     if (div != 0.0) {
       real newHstep = nom / div;
-      if (!std::isnan(newHstep) && !std::isinf(newHstep))
+      if (!std::isnan(newHstep) && !std::isinf(newHstep)) {
         elStepsizes_[i] = newHstep;
-      else
-      // newH somehow nan or inf? fallback
+      } else {
+        hitFallback = true;
         elStepsizes_[i] = stepsizeElFallback_;
+      }
     } else {
-      //div somehow zero? fallback
       elStepsizes_[i] = stepsizeElFallback_;
     }
 
-    addElDiff(maxDu);
+    real maxU = maxVecNorm(u1[i]);
+    real relDu = (maxU > 0) ? (maxDu / maxU) : maxDu;
+
+    addElDiff(relDu);
+    if (nsteps_ % 10 == 0) {
+      std::cerr << "  step " << nsteps_ << " elMagnet[" << i << "]: "
+                << "elStepsize=" << elStepsizes_[i]
+                << "  maxDu=" << maxDu << std::endl;
+    }
+
+    if (nsteps_ % 10 == 0) {  // or whatever cadence you want
+      std::cerr << "  step " << nsteps_ << " el[" << i << "]: "
+                << "maxDu=" << maxDu << " maxDg=" << maxDg
+                << " dudu=" << dudu << " dudg=" << dudg << " dgdg=" << dgdg
+                << " nom=" << nom << " div=" << div
+                << " BB1->BB2=" << usedFallbackForBB1
+                << " fallback=" << hitFallback
+                << " elStepsize=" << elStepsizes_[i]
+                << std::endl;
+    }
   }
 }
 

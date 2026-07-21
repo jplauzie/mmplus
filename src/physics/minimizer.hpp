@@ -5,6 +5,7 @@
 
 #include "field.hpp"
 #include "quantityevaluator.hpp"
+#include "rigidbodymodes.hpp"   
 
 class Ferromagnet;
 class HostMagnet;
@@ -27,21 +28,21 @@ class Minimizer {
             int nMagDiffSamples,
             real stopMaxElDiff,
             int nElDiffSamples,
-            real stepsizeEl = 1e-14, real stepsizeElFallback = 1e-30);
+            real stepsizeEl = 1e-30, real stepsizeElFallback = 1e-30);
 
   Minimizer(const HostMagnet* magnet,
             real stopMaxMagDiff,
             int nMagDiffSamples,
             real stopMaxElDiff,
             int nElDiffSamples,
-            real stepsizeEl = 1e-14, real stepsizeElFallback = 1e-30);
+            real stepsizeEl = 1e-30, real stepsizeElFallback = 1e-30);
 
   Minimizer(const MumaxWorld* world,
             real stopMaxMagDiff,
             int nMagDiffSamples,
             real stopMaxElDiff,
             int nElDiffSamples,
-            real stepsizeEl = 1e-14, real stepsizeElFallback = 1e-30);
+            real stepsizeEl = 1e-30, real stepsizeElFallback = 1e-30);
 
   void exec();
 
@@ -67,6 +68,7 @@ class Minimizer {
   // One entry per independent Ferromagnet or per HostMagnet (AFM/NcAfm), not sublattice
   std::vector<const Magnet*> elMagnets_;
   std::vector<M_FieldQuantity> forces_;
+  std::vector<RigidBodyGeometry> rigidGeoms_;
   std::vector<Field> f0, f1, u0, u1;
   std::vector<real> elStepsizes_;
   std::deque<real> lastElDiffs_;
