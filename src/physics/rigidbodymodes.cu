@@ -10,8 +10,7 @@
 
 namespace {
 
-// result[i] = cross(a[i], b[i]), cell by cell. Same shape as k_stepElastic
-// in minimizer.cu: no reduction, no shared memory.
+// result[i] = cross(a[i], b[i]), cell by cell
 __global__ void k_crossProduct(CuField result, CuField a, CuField b) {
   int idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (!result.cellInGrid(idx))
@@ -48,7 +47,7 @@ void invert3x3(const double I[3][3], real out[3][3]) {
   out[2][2] = real(( I[0][0]*I[1][1] - I[0][1]*I[1][0]) * invDet);
 }
 
-}  // namespace
+}  
 
 RigidBodyGeometry computeRigidBodyGeometry(std::shared_ptr<const System> system) {
   Grid grid = system->grid();
@@ -57,7 +56,7 @@ RigidBodyGeometry computeRigidBodyGeometry(std::shared_ptr<const System> system)
   std::vector<bool> geomMask = system->geometry().getData();
   bool hasMask = !geomMask.empty();  // empty buffer == "everything included"
 
-  // --- mass-weighted COM (host, one-time; double is cheap here) ---
+  // mass-weighted center of mass (COM) (host, one-time). Should probably be a cuda kernel
   double sx = 0, sy = 0, sz = 0;
   int count = 0;
   for (int i = 0; i < ncells; i++) {
@@ -70,7 +69,7 @@ RigidBodyGeometry computeRigidBodyGeometry(std::shared_ptr<const System> system)
     throw std::runtime_error("computeRigidBodyGeometry: empty geometry.");
   real3 com = {real(sx / count), real(sy / count), real(sz / count)};
 
-  // --- inertia tensor about COM, and relPos data in the same pass ---
+  // inertia tensor about COM, and relPos data in the same pass 
   double I[3][3] = {{0}};
   std::vector<real> relPosData(3 * ncells, real(0));  // zero outside geometry
   for (int i = 0; i < ncells; i++) {
@@ -88,10 +87,14 @@ RigidBodyGeometry computeRigidBodyGeometry(std::shared_ptr<const System> system)
     I[2][0] += -x*z;       I[2][1] += -y*z;      I[2][2] += x*x + y*y;
   }
 
+
+  //Claude trick, this should probably be perpindicular axis theorem or something. temporary.
+  // see Numerical Recipes 3rd Ed, 19.5, Linear Regularization Methods
+
   // Tikhonov regularization: thin/2D geometries make some rotation axes
   // genuinely undetectable (that block of I is singular, not just small).
-  // Without this, the corresponding omega component blows up on noise
-  // instead of correctly reading as zero.
+  // Without this, the corresponding omega component may blow up on noise
+  // instead of as zero.
   double trace = I[0][0] + I[1][1] + I[2][2];
   double lambda = 1e-10 * trace;
   for (int d = 0; d < 3; d++) I[d][d] += lambda;

@@ -145,33 +145,16 @@ void Minimizer::exec() {
   lastElDiffs_.clear();
 
   bool magnetoelasticsActive = !elMagnets_.empty();
-
   if (!magnetoelasticsActive) {
     while (!converged())
       step();
     return;
   }
 
-  const int maxSteps = 20000;  // TODO: make configurable if this isn't enough. maybe not needed anymore?
-  
-
+  const int maxSteps = 2000000;  // TODO: make configurable if this isn't enough. maybe not needed anymore?
   while (!converged() && nsteps_ < maxSteps) {
     step();
   }
-
-  std::cerr << "Minimizer: converged after " << nsteps_ << " steps "
-            << "(mag samples=" << lastMagDiffs_.size()
-            << ", el samples=" << lastElDiffs_.size() << ")" << std::endl;
-
-  real finalMagDiff = lastMagDiffs_.empty() ? real(-1) : lastMagDiffs_.back();
-  real finalElDiff = lastElDiffs_.empty() ? real(-1) : lastElDiffs_.back();
-  std::cerr << "  final maxMagDiff=" << finalMagDiff
-            << "  final maxElDiff=" << finalElDiff
-            << "  (thresholds: " << stopMaxMagDiff_ << ", " << stopMaxElDiff_ << ")"
-            << std::endl;
-
-  if (nsteps_ >= maxSteps)
-    std::cerr << "Warning: Minimizer did not converge after " << maxSteps << " steps." << std::endl;
 }
 
 __global__ void k_step(CuField mField,
@@ -268,10 +251,11 @@ void Minimizer::stepElastic() {
 
     u1[i] = Field(elMagnets_[i]->system(), 3);
     int ncells = u1[i].grid().ncells();
-    //removeRigidBodyModes(u0[i], rigidGeoms_[i]);
-    //removeRigidBodyModes(u1[i], rigidGeoms_[i]);
     cudaLaunch(ncells, k_stepElastic, u1[i].cu(), u0[i].cu(), f0[i].cu(), h);
-    removeRigidBodyModes(u1[i], rigidGeoms_[i]);
+  }
+
+  for (size_t i = 0; i < elMagnets_.size(); i++) {
+    removeRigidBodyModes(u1[i], rigidGeoms_[i]); //removes rigid translation/rotation which cause extra minimizer step counts. a form of 'normalization' like with m
   }
 
   for (size_t i = 0; i < elMagnets_.size(); i++)
@@ -281,6 +265,7 @@ void Minimizer::stepElastic() {
 
   for (size_t i = 0; i < elMagnets_.size(); i++) {
     Field du = add(real(+1), u1[i], real(-1), u0[i]);
+    //could removerigid again for du to be safe, but doesn't seem needed
     //removeRigidBodyModes(du, rigidGeoms_[i]);
     Field dg = add(real(-1), f1[i], real(+1), f0[i]);
 
@@ -306,6 +291,7 @@ void Minimizer::stepElastic() {
     
 
     // scaling trick to avoid float32 underflow issues in dudu kernel
+    // ultimately the duScale and dgScale factors cancel out in the BB step
     real dudu = dotSum(du, du) / (duScale * duScale);
     real dudg = dotSum(du, dg) / (duScale * dgScale);
     real dgdg = dotSum(dg, dg) / (dgScale * dgScale);
@@ -328,7 +314,7 @@ void Minimizer::stepElastic() {
       div = dgdg;
     }
 
-    //shouldn't be necessary anymore
+    //safety fallbacks, that shouldn't be necessary anymore
     bool hitFallback = (div == 0.0);
     if (div != 0.0) {
       real newHstep = nom / div;
@@ -346,22 +332,6 @@ void Minimizer::stepElastic() {
     real relDu = (maxU > 0) ? (maxDu / maxU) : maxDu;
 
     addElDiff(relDu);
-    if (nsteps_ % 10 == 0) {
-      std::cerr << "  step " << nsteps_ << " elMagnet[" << i << "]: "
-                << "elStepsize=" << elStepsizes_[i]
-                << "  maxDu=" << maxDu << std::endl;
-    }
-
-    if (nsteps_ % 10 == 0) {  // or whatever cadence you want
-      std::cerr << "  step " << nsteps_ << " el[" << i << "]: "
-                << "maxDu=" << maxDu << " maxDg=" << maxDg
-                << " dudu=" << dudu << " dudg=" << dudg << " dgdg=" << dgdg
-                << " nom=" << nom << " div=" << div
-                << " BB1->BB2=" << usedFallbackForBB1
-                << " fallback=" << hitFallback
-                << " elStepsize=" << elStepsizes_[i]
-                << std::endl;
-    }
   }
 }
 
