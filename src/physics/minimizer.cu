@@ -26,7 +26,7 @@ void addElasticIfPresent(const Magnet* magnet,
   if (!elasticityAssuredZero(magnet)) {
     elMagnets.push_back(magnet);
     forces.push_back(effectiveBodyForceQuantity(magnet));
-    rigidGeoms.push_back(computeRigidBodyGeometry(magnet->system()));
+    rigidGeoms.push_back(computeRigidBodyGeometry(magnet));
   }
 }
 
@@ -273,6 +273,7 @@ void Minimizer::stepMagnetic() {
 }
 
 void Minimizer::stepElastic() {
+  
   for (size_t i = 0; i < elMagnets_.size(); i++) {
     u0[i] = elMagnets_[i]->elasticDisplacement()->eval();
 
@@ -284,7 +285,7 @@ void Minimizer::stepElastic() {
       // evaluated consistently on the same corrected state. After step 0,
       // u0 is already in the corrected gauge (it's last step's corrected
       // u1), so this only needs to run once.
-      removeRigidBodyModes(u0[i], rigidGeoms_[i]);
+      removeRigidBodyModes(u0[i], rigidGeoms_[i], elMagnets_[i]);
       elMagnets_[i]->elasticDisplacement()->set(u0[i]);
     }
 
@@ -292,7 +293,7 @@ void Minimizer::stepElastic() {
       f0[i] = forces_[i].eval();
     else
       f0[i] = f1[i];
-    removeRigidBodyModes(f0[i], rigidGeoms_[i]);
+    removeRigidBodyModes(f0[i], rigidGeoms_[i], elMagnets_[i]);
 
     real h = elStepsizes_[i];
 
@@ -308,7 +309,7 @@ void Minimizer::stepElastic() {
     real rawStepNorm = maxVecNorm(rawStep);
 
     Field u1PreCorrection = u1[i];  // deep copy (Field's copy ctor copies GPU data)
-    removeRigidBodyModes(u1[i], rigidGeoms_[i]);
+    removeRigidBodyModes(u1[i], rigidGeoms_[i], elMagnets_[i]);
     Field correction = add(real(+1), u1PreCorrection, real(-1), u1[i]);
     real correctionNorm = maxVecNorm(correction);
 
@@ -328,9 +329,8 @@ void Minimizer::stepElastic() {
   for (size_t i = 0; i < elMagnets_.size(); i++) {
     f1[i] = forces_[i].eval();
 
-    // TEMP diagnostic: capture pre-clean norm before the real (live) clean.
     real f1NormBefore = maxVecNorm(f1[i]);
-    removeRigidBodyModes(f1[i], rigidGeoms_[i]);
+    removeRigidBodyModes(f1[i], rigidGeoms_[i], elMagnets_[i]);
     real f1NormAfter = maxVecNorm(f1[i]);
 
     bool printThisStep = (nsteps_ < 50) || (nsteps_ % 200 == 0);

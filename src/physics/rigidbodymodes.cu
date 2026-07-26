@@ -1,33 +1,161 @@
-#include <iomanip>
-#include <iostream>
 #include <stdexcept>
 #include <vector>
 
+#include "cudaerror.hpp"
 #include "cudalaunch.hpp"
+#include "cudastream.hpp"
 #include "field.hpp"
-#include "fieldops.hpp"
+#include "gpubuffer.hpp"
+#include "magnet.hpp"
+#include "parameter.hpp"
 #include "reduce.hpp"
 #include "rigidbodymodes.hpp"
 #include "system.hpp"
 
 namespace {
 
-// result[i] = cross(a[i], b[i]), cell by cell
-__global__ void k_crossProduct(CuField result, CuField a, CuField b) {
-  int idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (!result.cellInGrid(idx))
-    return;
-  result.setVectorInCell(idx, cross(a.vectorAt(idx), b.vectorAt(idx)));
+constexpr int MAX_REDUCTION_BLOCKS = 4096;
+
+int numReductionBlocks(int ncells) {
+  int n = (ncells + BLOCKDIM - 1) / BLOCKDIM;
+  if (n < 1) n = 1;
+  if (n > MAX_REDUCTION_BLOCKS) n = MAX_REDUCTION_BLOCKS;
+  return n;
 }
 
-Field crossProduct(const Field& a, const Field& b) {
-  Field result(a.system(), 3);
-  int ncells = result.grid().ncells();
-  cudaLaunch(ncells, k_crossProduct, result.cu(), a.cu(), b.cu());
+// Double-precision cell position. cellsize itself is only float32 at the
+// source (CuSystem::cellsize is real3), so this can't recover precision
+// already lost there -- it only avoids compounding additional rounding in
+// everything downstream (com subtraction, cross products, sums).
+__device__ inline double3 cellPositionDeviceD(const CuSystem& system, int idx) {
+  int3 coord = system.grid.index2coord(idx);
+  return double3{double(coord.x) * double(system.cellsize.x),
+                 double(coord.y) * double(system.cellsize.y),
+                 double(coord.z) * double(system.cellsize.z)};
+}
+
+__device__ inline double3 subD(double3 a, double3 b) {
+  return double3{a.x - b.x, a.y - b.y, a.z - b.z};
+}
+
+__device__ inline double3 crossD(double3 a, double3 b) {
+  return double3{a.y * b.z - a.z * b.y,
+                 a.z * b.x - a.x * b.z,
+                 a.x * b.y - a.y * b.x};
+}
+
+// ---- pass 1: mass-weighted center of mass, fused with total-mass sum ----
+
+__global__ void k_comPartialSums(double4* blockSums, CuSystem system,
+                                 CuParameter rho) {
+  __shared__ double sx[BLOCKDIM], sy[BLOCKDIM], sz[BLOCKDIM], sw[BLOCKDIM];
+  int ncells = system.grid.ncells();
+  int tid = threadIdx.x;
+  int gid = blockIdx.x * blockDim.x + threadIdx.x;
+  int stride = blockDim.x * gridDim.x;
+
+  double lx = 0, ly = 0, lz = 0, lw = 0;
+  for (int i = gid; i < ncells; i += stride) {
+    if (!system.inGeometry(i))
+      continue;
+    double w = rho.valueAt(i);
+    double3 p = cellPositionDeviceD(system, i);
+    lx += w * p.x;
+    ly += w * p.y;
+    lz += w * p.z;
+    lw += w;
+  }
+  sx[tid] = lx; sy[tid] = ly; sz[tid] = lz; sw[tid] = lw;
+  __syncthreads();
+
+  for (unsigned int s = BLOCKDIM / 2; s > 0; s >>= 1) {
+    if (tid < s) {
+      sx[tid] += sx[tid + s]; sy[tid] += sy[tid + s];
+      sz[tid] += sz[tid + s]; sw[tid] += sw[tid + s];
+    }
+    __syncthreads();
+  }
+
+  if (tid == 0)
+    blockSums[blockIdx.x] = {sx[0], sy[0], sz[0], sw[0]};
+}
+
+struct ComResult { double3 com; double totalRho; };
+
+ComResult computeCom(const CuSystem& cusys, const CuParameter& rho, int ncells) {
+  int numBlocks = numReductionBlocks(ncells);
+  GpuBuffer<double4> d_partials(numBlocks);
+
+  k_comPartialSums<<<numBlocks, BLOCKDIM, 0, getCudaStream()>>>(
+      d_partials.get(), cusys, rho);
+  checkCudaError(cudaPeekAtLastError());
+
+  std::vector<double4> partials(numBlocks);
+  checkCudaError(cudaMemcpyAsync(partials.data(), d_partials.get(),
+                                 numBlocks * sizeof(double4),
+                                 cudaMemcpyDeviceToHost, getCudaStream()));
+  checkCudaError(cudaStreamSynchronize(getCudaStream()));
+
+  double firstmoment_x = 0, firstmoment_y = 0, firstmoment_z = 0, totalmass = 0;
+  for (const double4& p : partials) {
+    firstmoment_x += p.x; firstmoment_y += p.y; firstmoment_z += p.z; totalmass += p.w;
+  }
+  if (totalmass <= 0.0)
+    throw std::runtime_error("computeRigidBodyGeometry: total mass (sum of rho) in geometry is zero or negative.");
+
+  ComResult result;
+  result.com = double3{firstmoment_x / totalmass, firstmoment_y / totalmass, firstmoment_z / totalmass};
+  result.totalRho = totalmass;
   return result;
 }
 
-void invert3x3(const double I[3][3], real out[3][3]) {
+// ---- pass 2: mass-weighted inertia tensor about com -----------------------
+
+struct InertiaPartial { double3 diag; double3 offdiag; };
+
+__global__ void k_inertiaPartialSums(InertiaPartial* blockSums,
+                                     CuSystem system, CuParameter rho,
+                                     double3 com) {
+  __shared__ double sxx[BLOCKDIM], syy[BLOCKDIM], szz[BLOCKDIM];
+  __shared__ double sxy[BLOCKDIM], sxz[BLOCKDIM], syz[BLOCKDIM];
+  int ncells = system.grid.ncells();
+  int tid = threadIdx.x;
+  int gid = blockIdx.x * blockDim.x + threadIdx.x;
+  int stride = blockDim.x * gridDim.x;
+
+  double xx = 0, yy = 0, zz = 0, xy = 0, xz = 0, yz = 0;
+  for (int i = gid; i < ncells; i += stride) {
+    if (!system.inGeometry(i))
+      continue;
+    double w = rho.valueAt(i);
+    double3 r = subD(cellPositionDeviceD(system, i), com);
+    double x = r.x, y = r.y, z = r.z;
+    xx += w * (y * y + z * z);
+    yy += w * (x * x + z * z);
+    zz += w * (x * x + y * y);
+    xy += w * (-x * y);
+    xz += w * (-x * z);
+    yz += w * (-y * z);
+  }
+  sxx[tid] = xx; syy[tid] = yy; szz[tid] = zz;
+  sxy[tid] = xy; sxz[tid] = xz; syz[tid] = yz;
+  __syncthreads();
+
+  for (unsigned int s = BLOCKDIM / 2; s > 0; s >>= 1) {
+    if (tid < s) {
+      sxx[tid] += sxx[tid + s]; syy[tid] += syy[tid + s]; szz[tid] += szz[tid + s];
+      sxy[tid] += sxy[tid + s]; sxz[tid] += sxz[tid + s]; syz[tid] += syz[tid + s];
+    }
+    __syncthreads();
+  }
+
+  if (tid == 0) {
+    blockSums[blockIdx.x].diag = {sxx[0], syy[0], szz[0]};
+    blockSums[blockIdx.x].offdiag = {sxy[0], sxz[0], syz[0]};
+  }
+}
+
+void invert3x3(const double I[3][3], double out[3][3]) {
   double det =
       I[0][0]*(I[1][1]*I[2][2] - I[1][2]*I[2][1]) -
       I[0][1]*(I[1][0]*I[2][2] - I[1][2]*I[2][0]) +
@@ -38,122 +166,154 @@ void invert3x3(const double I[3][3], real out[3][3]) {
                              "after regularization.");
 
   double invDet = 1.0 / det;
-  out[0][0] = real(( I[1][1]*I[2][2] - I[1][2]*I[2][1]) * invDet);
-  out[0][1] = real((-I[0][1]*I[2][2] + I[0][2]*I[2][1]) * invDet);
-  out[0][2] = real(( I[0][1]*I[1][2] - I[0][2]*I[1][1]) * invDet);
-  out[1][0] = real((-I[1][0]*I[2][2] + I[1][2]*I[2][0]) * invDet);
-  out[1][1] = real(( I[0][0]*I[2][2] - I[0][2]*I[2][0]) * invDet);
-  out[1][2] = real((-I[0][0]*I[1][2] + I[0][2]*I[1][0]) * invDet);
-  out[2][0] = real(( I[1][0]*I[2][1] - I[1][1]*I[2][0]) * invDet);
-  out[2][1] = real((-I[0][0]*I[2][1] + I[0][1]*I[2][0]) * invDet);
-  out[2][2] = real(( I[0][0]*I[1][1] - I[0][1]*I[1][0]) * invDet);
+  out[0][0] = ( I[1][1]*I[2][2] - I[1][2]*I[2][1]) * invDet;
+  out[0][1] = (-I[0][1]*I[2][2] + I[0][2]*I[2][1]) * invDet;
+  out[0][2] = ( I[0][1]*I[1][2] - I[0][2]*I[1][1]) * invDet;
+  out[1][0] = (-I[1][0]*I[2][2] + I[1][2]*I[2][0]) * invDet;
+  out[1][1] = ( I[0][0]*I[2][2] - I[0][2]*I[2][0]) * invDet;
+  out[1][2] = (-I[0][0]*I[1][2] + I[0][2]*I[1][0]) * invDet;
+  out[2][0] = ( I[1][0]*I[2][1] - I[1][1]*I[2][0]) * invDet;
+  out[2][1] = (-I[0][0]*I[2][1] + I[0][1]*I[2][0]) * invDet;
+  out[2][2] = ( I[0][0]*I[1][1] - I[0][1]*I[1][0]) * invDet;
 }
 
-}  
+// ---- translation + angular momentum, fused, mass-weighted -----------------
 
-RigidBodyGeometry computeRigidBodyGeometry(std::shared_ptr<const System> system) {
-  Grid grid = system->grid();
-  int ncells = grid.ncells();
+struct TransRotPartial { double3 rhoF; double3 rhoRxF; };
 
-  std::vector<bool> geomMask = system->geometry().getData();
-  bool hasMask = !geomMask.empty();  // empty buffer == "everything included"
+__global__ void k_transRotPartialSums(TransRotPartial* blockSums, CuField f,
+                                      CuParameter rho, double3 com) {
+  __shared__ double sfx[BLOCKDIM], sfy[BLOCKDIM], sfz[BLOCKDIM];
+  __shared__ double slx[BLOCKDIM], sly[BLOCKDIM], slz[BLOCKDIM];
+  int ncells = f.system.grid.ncells();
+  int tid = threadIdx.x;
+  int gid = blockIdx.x * blockDim.x + threadIdx.x;
+  int stride = blockDim.x * gridDim.x;
 
-  // mass-weighted center of mass (COM) (host, one-time). Should probably be a cuda kernel
-  double sx = 0, sy = 0, sz = 0;
-  int count = 0;
-  for (int i = 0; i < ncells; i++) {
-    if (hasMask && !geomMask[i]) continue;
-    real3 p = system->cellPosition(grid.index2coord(i));
-    sx += p.x; sy += p.y; sz += p.z;
-    count++;
+  double fx = 0, fy = 0, fz = 0, lx = 0, ly = 0, lz = 0;
+  for (int i = gid; i < ncells; i += stride) {
+    if (!f.cellInGeometry(i))
+      continue;
+    double w = rho.valueAt(i);
+    real3 vf = f.vectorAt(i);
+    double3 v = double3{double(vf.x), double(vf.y), double(vf.z)};
+    fx += w * v.x; fy += w * v.y; fz += w * v.z;
+
+    double3 r = subD(cellPositionDeviceD(f.system, i), com);
+    double3 c = crossD(r, v);
+    lx += w * c.x; ly += w * c.y; lz += w * c.z;
   }
-  if (count == 0)
-    throw std::runtime_error("computeRigidBodyGeometry: empty geometry.");
-  real3 com = {real(sx / count), real(sy / count), real(sz / count)};
+  sfx[tid] = fx; sfy[tid] = fy; sfz[tid] = fz;
+  slx[tid] = lx; sly[tid] = ly; slz[tid] = lz;
+  __syncthreads();
 
-  // inertia tensor about COM, and relPos data in the same pass 
-  double I[3][3] = {{0}};
-  std::vector<real> relPosData(3 * ncells, real(0));  // zero outside geometry
-  for (int i = 0; i < ncells; i++) {
-    if (hasMask && !geomMask[i]) continue;
-    real3 p = system->cellPosition(grid.index2coord(i));
-    real3 r = {p.x - com.x, p.y - com.y, p.z - com.z};
-
-    relPosData[i]              = r.x;
-    relPosData[ncells + i]     = r.y;
-    relPosData[2 * ncells + i] = r.z;
-
-    double x = r.x, y = r.y, z = r.z;
-    I[0][0] += y*y + z*z;  I[0][1] += -x*y;      I[0][2] += -x*z;
-    I[1][0] += -x*y;       I[1][1] += x*x + z*z; I[1][2] += -y*z;
-    I[2][0] += -x*z;       I[2][1] += -y*z;      I[2][2] += x*x + y*y;
+  for (unsigned int s = BLOCKDIM / 2; s > 0; s >>= 1) {
+    if (tid < s) {
+      sfx[tid] += sfx[tid + s]; sfy[tid] += sfy[tid + s]; sfz[tid] += sfz[tid + s];
+      slx[tid] += slx[tid + s]; sly[tid] += sly[tid + s]; slz[tid] += slz[tid + s];
+    }
+    __syncthreads();
   }
 
-  std::cerr << std::setprecision(17);
-  std::cerr << "[computeRigidBodyGeometry] com=(" << com.x << ", " << com.y
-            << ", " << com.z << ")  count=" << count << std::endl;
-  std::cerr << "[computeRigidBodyGeometry] I (pre-regularization):" << std::endl;
-  std::cerr << "  [" << I[0][0] << ", " << I[0][1] << ", " << I[0][2] << "]" << std::endl;
-  std::cerr << "  [" << I[1][0] << ", " << I[1][1] << ", " << I[1][2] << "]" << std::endl;
-  std::cerr << "  [" << I[2][0] << ", " << I[2][1] << ", " << I[2][2] << "]" << std::endl;
+  if (tid == 0) {
+    blockSums[blockIdx.x].rhoF = {sfx[0], sfy[0], sfz[0]};
+    blockSums[blockIdx.x].rhoRxF = {slx[0], sly[0], slz[0]};
+  }
+}
 
-  // see Numerical Recipes 3rd Ed, 19.5, Linear Regularization Methods
-  // Tikhonov regularization: thin/2D geometries make some rotation axes
-  // genuinely undetectable (that block of I is singular, not just small).
-  // Without this, the corresponding omega component may blow up on noise
-  // instead of as zero.
-  double trace = I[0][0] + I[1][1] + I[2][2];
+// ---- fused elementwise apply: f -= T + omega x r, geometry-masked ---------
+
+__global__ void k_subtractRigidModes(CuField f, double3 com, double3 T,
+                                     double3 omega) {
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (!f.cellInGrid(idx))
+    return;
+  if (!f.cellInGeometry(idx))
+    return;
+
+  double3 r = subD(cellPositionDeviceD(f.system, idx), com);
+  double3 correction = {T.x + (omega.y * r.z - omega.z * r.y),
+                        T.y + (omega.z * r.x - omega.x * r.z),
+                        T.z + (omega.x * r.y - omega.y * r.x)};
+
+  real3 v = f.vectorAt(idx);
+  real3 result = {real(double(v.x) - correction.x),
+                  real(double(v.y) - correction.y),
+                  real(double(v.z) - correction.z)};
+  f.setVectorInCell(idx, result);
+}
+
+}  // namespace ends
+
+RigidBodyGeometry computeRigidBodyGeometry(const Magnet* magnet) {
+  std::shared_ptr<const System> system = magnet->system();
+  int ncells = system->grid().ncells();
+  CuSystem cusys = system->cu();
+  CuParameter rho = magnet->rho.cu();
+
+  ComResult comResult = computeCom(cusys, rho, ncells);
+
+  int numBlocks = numReductionBlocks(ncells);
+  GpuBuffer<InertiaPartial> d_partials(numBlocks);
+  k_inertiaPartialSums<<<numBlocks, BLOCKDIM, 0, getCudaStream()>>>(
+      d_partials.get(), cusys, rho, comResult.com);
+  checkCudaError(cudaPeekAtLastError());
+
+  std::vector<InertiaPartial> partials(numBlocks);
+  checkCudaError(cudaMemcpyAsync(partials.data(), d_partials.get(),
+                                 numBlocks * sizeof(InertiaPartial),
+                                 cudaMemcpyDeviceToHost, getCudaStream()));
+  checkCudaError(cudaStreamSynchronize(getCudaStream()));
+
+  double Ixx = 0, Iyy = 0, Izz = 0, Ixy = 0, Ixz = 0, Iyz = 0;
+  for (const InertiaPartial& p : partials) {
+    Ixx += p.diag.x; Iyy += p.diag.y; Izz += p.diag.z;
+    Ixy += p.offdiag.x; Ixz += p.offdiag.y; Iyz += p.offdiag.z;
+  }
+  double I[3][3] = {{Ixx, Ixy, Ixz}, {Ixy, Iyy, Iyz}, {Ixz, Iyz, Izz}};
+
+  double trace = Ixx + Iyy + Izz;
   double lambda = 1e-10 * trace;
   for (int d = 0; d < 3; d++) I[d][d] += lambda;
 
-  std::cerr << "[computeRigidBodyGeometry] trace=" << trace
-            << "  lambda=" << lambda << std::endl;
-
   RigidBodyGeometry geom;
-  geom.relPos = Field(system, 3);
-  geom.relPos.setData(relPosData);
+  geom.com = comResult.com;
+  geom.totalRho = comResult.totalRho;
   invert3x3(I, geom.Iinv);
-
-  std::cerr << "[computeRigidBodyGeometry] Iinv:" << std::endl;
-  std::cerr << "  [" << geom.Iinv[0][0] << ", " << geom.Iinv[0][1] << ", " << geom.Iinv[0][2] << "]" << std::endl;
-  std::cerr << "  [" << geom.Iinv[1][0] << ", " << geom.Iinv[1][1] << ", " << geom.Iinv[1][2] << "]" << std::endl;
-  std::cerr << "  [" << geom.Iinv[2][0] << ", " << geom.Iinv[2][1] << ", " << geom.Iinv[2][2] << "]" << std::endl;
-  std::cerr << std::setprecision(6);
-
   return geom;
 }
 
 void removeRigidBodyModes(Field& f, const RigidBodyGeometry& geom,
-                          bool printDiagnostics) {
-  // Translation: fieldAverage is already geometry-masked
-  std::vector<real> T = fieldAverage(f);
+                          const Magnet* magnet) {
+  CuParameter rho = magnet->rho.cu();
+  int ncells = f.system()->grid().ncells();
+  int numBlocks = numReductionBlocks(ncells);
 
-  // Rotation: L = sum_i cross(r_i, f_i); fieldAverage(L_field)*cellsInGeo()
-  // recovers the sum from the mean, reusing the same masked reduction.
-  Field Lfield = crossProduct(geom.relPos, f);
-  std::vector<real> Lavg = fieldAverage(Lfield);
-  int cellsInGeo = f.system()->cellsInGeo();
-  real3 L = {Lavg[0] * cellsInGeo, Lavg[1] * cellsInGeo, Lavg[2] * cellsInGeo};
+  GpuBuffer<TransRotPartial> d_partials(numBlocks);
+  k_transRotPartialSums<<<numBlocks, BLOCKDIM, 0, getCudaStream()>>>(
+      d_partials.get(), f.cu(), rho, geom.com);
+  checkCudaError(cudaPeekAtLastError());
 
-  real3 omega;
+  std::vector<TransRotPartial> partials(numBlocks);
+  checkCudaError(cudaMemcpyAsync(partials.data(), d_partials.get(),
+                                 numBlocks * sizeof(TransRotPartial),
+                                 cudaMemcpyDeviceToHost, getCudaStream()));
+  checkCudaError(cudaStreamSynchronize(getCudaStream()));
+
+  double3 rhoF{0, 0, 0}, rhoRxF{0, 0, 0};
+  for (const TransRotPartial& p : partials) {
+    rhoF.x += p.rhoF.x; rhoF.y += p.rhoF.y; rhoF.z += p.rhoF.z;
+    rhoRxF.x += p.rhoRxF.x; rhoRxF.y += p.rhoRxF.y; rhoRxF.z += p.rhoRxF.z;
+  }
+
+  double3 T = {rhoF.x / geom.totalRho, rhoF.y / geom.totalRho,
+              rhoF.z / geom.totalRho};
+  double3 L = rhoRxF;
+
+  double3 omega;
   omega.x = geom.Iinv[0][0]*L.x + geom.Iinv[0][1]*L.y + geom.Iinv[0][2]*L.z;
   omega.y = geom.Iinv[1][0]*L.x + geom.Iinv[1][1]*L.y + geom.Iinv[1][2]*L.z;
   omega.z = geom.Iinv[2][0]*L.x + geom.Iinv[2][1]*L.y + geom.Iinv[2][2]*L.z;
 
-  if (printDiagnostics) {
-    std::cerr << std::setprecision(17);
-    std::cerr << "[rigidbodymodes] T=(" << T[0] << ", " << T[1] << ", " << T[2]
-              << ")" << std::endl;
-    std::cerr << "[rigidbodymodes] L=(" << L.x << ", " << L.y << ", " << L.z
-              << ")" << std::endl;
-    std::cerr << "[rigidbodymodes] omega=(" << omega.x << ", " << omega.y
-              << ", " << omega.z << ")" << std::endl;
-    std::cerr << std::setprecision(6);
-  }
-
-  // uRigid(r) = T + omega x r
-  Field omegaCrossR = crossProduct(Field(f.system(), 3, omega), geom.relPos);
-  real3 Treal3 = {T[0], T[1], T[2]};
-  addTo(omegaCrossR, Treal3, Field(f.system(), 3, real3{1,1,1}));  // += T uniformly... 
-  addTo(f, real(-1), omegaCrossR);
+  cudaLaunch(ncells, k_subtractRigidModes, f.cu(), geom.com, T, omega);
 }

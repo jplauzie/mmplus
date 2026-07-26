@@ -1,26 +1,33 @@
 #pragma once
 #include <memory>
 #include "datatypes.hpp"
-#include "field.hpp"
 
-class System;
+class Magnet;
+class Field;
 
 struct RigidBodyGeometry {
-  Field relPos;     // r - center of mass (COM) per cell, world units, zero outside geometry
-                     // (precomputed once; purely geometric, independent of u)
-  real Iinv[3][3];  // regularized pseudo-inverse of the inertia tensor
+  double3 com;       // mass-weighted center of mass, world units
+  double Iinv[3][3]; // regularized pseudo-inverse of the mass-weighted inertia tensor about com
+  double totalRho;   // sum of rho over the geometry (cell volume cancels out
+                     // everywhere it would appear, so it's never needed).
+                     // Precomputed once; assumes rho is static for the
+                     // duration of the minimization.
 };
 
-/// One-time per-magnet setup: mass-weighted (geometry-aware) COM and
-/// inertia tensor, cached for reuse every minimizer step.
-RigidBodyGeometry computeRigidBodyGeometry(std::shared_ptr<const System> system);
+/// One-time per-magnet setup: mass-weighted (geometry-aware) center of mass
+/// and inertia tensor, cached for reuse every minimizer step. No per-cell
+/// data is stored -- cell positions are cheap to recompute on the fly from
+/// the grid. Computed and stored in double precision throughout: float32
+/// storage here was found to introduce measurable asymmetry (a nonzero
+/// off-diagonal Iinv term that should be exactly zero for symmetric
+/// geometries), which showed up as basin-selection sensitivity in
+/// magnetization-symmetry-breaking test cases.
+RigidBodyGeometry computeRigidBodyGeometry(const Magnet* magnet);
 
-/// Subtracts the best-fit rigid translation + rotation from `f` in place 
-/// (f as in field, not force! (magneto)-elastic forces don't care about absolute values of u and don't change).
-/// Called on `u1` right after each step to anchor the physical displacement
-/// state itself (preventing unconstrained rigid-mode drift from
-/// accumulating across steps, analogous to magnetization's normalize).
-/// Also safe to call on the linear diff `du`, or any other 3-component
-/// field defined on the same system as `geom`.
+/// Subtracts the best-fit rigid translation + rotation from `f` in place
+/// (f as in field, not force! (magneto)elastic forces don't care about
+/// absolute values of u and don't change).
+/// `magnet` supplies rho for the mass weighting and must be the same magnet
+/// that `geom` was computed from.
 void removeRigidBodyModes(Field& f, const RigidBodyGeometry& geom,
-                          bool printDiagnostics = false);
+                          const Magnet* magnet);
