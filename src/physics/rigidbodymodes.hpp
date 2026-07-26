@@ -22,4 +22,5 @@ RigidBodyGeometry computeRigidBodyGeometry(std::shared_ptr<const System> system)
 /// accumulating across steps, analogous to magnetization's normalize).
 /// Also safe to call on the linear diff `du`, or any other 3-component
 /// field defined on the same system as `geom`.
-void removeRigidBodyModes(Field& f, const RigidBodyGeometry& geom);
+void removeRigidBodyModes(Field& f, const RigidBodyGeometry& geom,
+                          bool printDiagnostics = false);

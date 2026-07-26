@@ -1,3 +1,5 @@
+#include <iomanip>
+#include <iostream>
 #include <stdexcept>
 #include <vector>
 
@@ -87,10 +89,15 @@ RigidBodyGeometry computeRigidBodyGeometry(std::shared_ptr<const System> system)
     I[2][0] += -x*z;       I[2][1] += -y*z;      I[2][2] += x*x + y*y;
   }
 
+  std::cerr << std::setprecision(17);
+  std::cerr << "[computeRigidBodyGeometry] com=(" << com.x << ", " << com.y
+            << ", " << com.z << ")  count=" << count << std::endl;
+  std::cerr << "[computeRigidBodyGeometry] I (pre-regularization):" << std::endl;
+  std::cerr << "  [" << I[0][0] << ", " << I[0][1] << ", " << I[0][2] << "]" << std::endl;
+  std::cerr << "  [" << I[1][0] << ", " << I[1][1] << ", " << I[1][2] << "]" << std::endl;
+  std::cerr << "  [" << I[2][0] << ", " << I[2][1] << ", " << I[2][2] << "]" << std::endl;
 
-  //Claude trick, this should probably be perpindicular axis theorem or something. temporary.
   // see Numerical Recipes 3rd Ed, 19.5, Linear Regularization Methods
-
   // Tikhonov regularization: thin/2D geometries make some rotation axes
   // genuinely undetectable (that block of I is singular, not just small).
   // Without this, the corresponding omega component may blow up on noise
@@ -99,16 +106,26 @@ RigidBodyGeometry computeRigidBodyGeometry(std::shared_ptr<const System> system)
   double lambda = 1e-10 * trace;
   for (int d = 0; d < 3; d++) I[d][d] += lambda;
 
+  std::cerr << "[computeRigidBodyGeometry] trace=" << trace
+            << "  lambda=" << lambda << std::endl;
+
   RigidBodyGeometry geom;
   geom.relPos = Field(system, 3);
   geom.relPos.setData(relPosData);
   invert3x3(I, geom.Iinv);
+
+  std::cerr << "[computeRigidBodyGeometry] Iinv:" << std::endl;
+  std::cerr << "  [" << geom.Iinv[0][0] << ", " << geom.Iinv[0][1] << ", " << geom.Iinv[0][2] << "]" << std::endl;
+  std::cerr << "  [" << geom.Iinv[1][0] << ", " << geom.Iinv[1][1] << ", " << geom.Iinv[1][2] << "]" << std::endl;
+  std::cerr << "  [" << geom.Iinv[2][0] << ", " << geom.Iinv[2][1] << ", " << geom.Iinv[2][2] << "]" << std::endl;
+  std::cerr << std::setprecision(6);
+
   return geom;
 }
 
-void removeRigidBodyModes(Field& f, const RigidBodyGeometry& geom) {
-  // Translation: fieldAverage is already geometry-masked (divides by
-  // cellsInGeo()), so this is exactly the mean rigid translation.
+void removeRigidBodyModes(Field& f, const RigidBodyGeometry& geom,
+                          bool printDiagnostics) {
+  // Translation: fieldAverage is already geometry-masked
   std::vector<real> T = fieldAverage(f);
 
   // Rotation: L = sum_i cross(r_i, f_i); fieldAverage(L_field)*cellsInGeo()
@@ -122,6 +139,17 @@ void removeRigidBodyModes(Field& f, const RigidBodyGeometry& geom) {
   omega.x = geom.Iinv[0][0]*L.x + geom.Iinv[0][1]*L.y + geom.Iinv[0][2]*L.z;
   omega.y = geom.Iinv[1][0]*L.x + geom.Iinv[1][1]*L.y + geom.Iinv[1][2]*L.z;
   omega.z = geom.Iinv[2][0]*L.x + geom.Iinv[2][1]*L.y + geom.Iinv[2][2]*L.z;
+
+  if (printDiagnostics) {
+    std::cerr << std::setprecision(17);
+    std::cerr << "[rigidbodymodes] T=(" << T[0] << ", " << T[1] << ", " << T[2]
+              << ")" << std::endl;
+    std::cerr << "[rigidbodymodes] L=(" << L.x << ", " << L.y << ", " << L.z
+              << ")" << std::endl;
+    std::cerr << "[rigidbodymodes] omega=(" << omega.x << ", " << omega.y
+              << ", " << omega.z << ")" << std::endl;
+    std::cerr << std::setprecision(6);
+  }
 
   // uRigid(r) = T + omega x r
   Field omegaCrossR = crossProduct(Field(f.system(), 3, omega), geom.relPos);
