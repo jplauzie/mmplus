@@ -258,6 +258,26 @@ class Magnet(ABC):
     def enable_elastodynamics(self, value):
         self._impl.enable_elastodynamics = value
 
+    @property
+    def clean_elastic_rigid_modes(self) -> bool:
+        """Whether to remove rigid-body translation and rotation from the
+        elastic displacement and velocity after every time step of the
+        dynamic time solver.
+
+        Default = False.
+
+        Only has an effect when :attr:`enable_elastodynamics` is also True.
+
+        See Also
+        --------
+        enable_elastodynamics
+        """
+        return self._impl.clean_elastic_rigid_modes
+
+    @clean_elastic_rigid_modes.setter
+    def clean_elastic_rigid_modes(self, value):
+        self._impl.clean_elastic_rigid_modes = value    
+
     # ----- ELASTIC PARAMETERS -------
 
     @property

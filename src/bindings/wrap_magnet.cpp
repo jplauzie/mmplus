@@ -31,6 +31,12 @@ void wrap_magnet(py::module& m) {
       .def_property("enable_elastodynamics",
                     &Magnet::enableElastodynamics,
                     &Magnet::setEnableElastodynamics)
+      .def_property("enable_elastodynamics",
+                    &Magnet::enableElastodynamics,
+                    &Magnet::setEnableElastodynamics)
+      .def_property("clean_elastic_rigid_modes",
+                    &Magnet::cleanElasticRigidModes,
+                    &Magnet::setCleanElasticRigidModes)              
 
       // elasticity parameters
       .def_readonly("external_body_force", &Magnet::externalBodyForce)

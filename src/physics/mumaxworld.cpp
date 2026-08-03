@@ -195,6 +195,29 @@ void MumaxWorld::resetTimeSolverEquations(FM_Field torque) const {
   }
 
   timesolver_->setEquations(equations);
+  timesolver_->setPostStepCallback([this]() { this->cleanElasticRigidModesCallback(); });
+}
+
+void MumaxWorld::cleanElasticRigidModesCallback() const {
+  for (const auto& namedMagnet : magnets_) {
+    Magnet* magnet = namedMagnet.second;
+    if (!magnet->enableElastodynamics() || !magnet->cleanElasticRigidModes())
+      continue;
+
+    auto it = rigidBodyGeoms_.find(magnet);
+    if (it == rigidBodyGeoms_.end()) {
+      it = rigidBodyGeoms_.emplace(magnet, computeRigidBodyGeometry(magnet)).first;
+    }
+    const RigidBodyGeometry& geom = it->second;
+
+    Field u = magnet->elasticDisplacement()->eval();
+    removeRigidBodyModes(u, geom, magnet);
+    magnet->elasticDisplacement()->set(u);
+
+    Field v = magnet->elasticVelocity()->eval();
+    removeRigidBodyModes(v, geom, magnet);
+    magnet->elasticVelocity()->set(v);
+  }
 }
 
 void MumaxWorld::minimize(real tol, int nSamples, real tolEl, int nSamplesEl,

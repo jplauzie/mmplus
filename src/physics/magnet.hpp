@@ -68,12 +68,15 @@ class Magnet {
   std::unique_ptr<Variable> elasticDisplacement_;
   std::unique_ptr<Variable> elasticVelocity_;
   bool enableElastodynamics_;
+  bool cleanElasticRigidModes_ = false;
 
  public:
   bool enableAsStrayFieldSource;
   bool enableAsStrayFieldDestination;
   bool enableElastodynamics() const {return enableElastodynamics_;}
   void setEnableElastodynamics(bool);
+  bool cleanElasticRigidModes() const {return cleanElasticRigidModes_;}
+  void setCleanElasticRigidModes(bool value) {cleanElasticRigidModes_ = value;}
 
   // Elasticity
   const Variable* elasticDisplacement() const;

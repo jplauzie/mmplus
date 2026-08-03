@@ -12,6 +12,7 @@
 #include "grid.hpp"
 #include "torque.hpp"
 #include "world.hpp"
+#include "rigidbodymodes.hpp"
 
 class Altermagnet;
 class Antiferromagnet;
@@ -269,4 +270,7 @@ class MumaxWorld : public World {
   std::map<std::string, std::unique_ptr<Antiferromagnet>> antiferromagnets_;
   std::map<std::string, std::unique_ptr<Altermagnet>> altermagnets_;
   std::map<std::string, std::unique_ptr<NcAfm>> ncafms_;
+
+  mutable std::map<const Magnet*, RigidBodyGeometry> rigidBodyGeoms_;
+  void cleanElasticRigidModesCallback() const;
 };

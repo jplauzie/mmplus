@@ -62,6 +62,7 @@ class TimeSolver {
   void steps(unsigned int nsteps);
   void runwhile(std::function<bool(void)>);
   void run(real duration);
+  void setPostStepCallback(std::function<void()> callback) { postStepCallback_ = callback; }
 
   //------------- HELPER FUNCTIONS FOR ADAPTIVE TIMESTEPPING -------------------
 
@@ -81,9 +82,12 @@ class TimeSolver {
   real upperBound_ = 2.0;
   bool fixedTimeStep_ = false;
   std::vector<DynamicEquation> eqs_;
+  
+  
 
   //------------- THE INTERNAL STEPPER -----------------------------------------
 
   std::unique_ptr<Stepper> stepper_;
   RKmethod method_;
+  std::function<void()> postStepCallback_;
 };
