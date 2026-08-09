@@ -14,6 +14,16 @@ struct RigidBodyGeometry {
                      // duration of the minimization.
 };
 
+struct RigidModeMoments {
+  double3 T;      // rigid translation
+  double3 omega;  // rigid rotation
+};
+
+// Computes the rigid translation/rotation content of f without modifying it.
+RigidModeMoments computeRigidModeMoments(const Field& f,
+                                         const RigidBodyGeometry& geom,
+                                         const Magnet* magnet);
+
 /// One-time per-magnet setup: mass-weighted (geometry-aware) center of mass
 /// and inertia tensor, cached for reuse every minimizer step. No per-cell
 /// data is stored -- cell positions are cheap to recompute on the fly from

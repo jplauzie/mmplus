@@ -44,8 +44,8 @@ const Ferromagnet* Altermagnet::sub2() const {
 }
 
 void Altermagnet::minimize(real tol, int nSamples, real tolEl, int nSamplesEl,
-                           real stepsizeEl, real stepsizeElFallback) {
-  Minimizer minimizer(this, tol, nSamples, tolEl, nSamplesEl, stepsizeEl, stepsizeElFallback);
+                           real stepsizeEl, real stepsizeElFallback,int maxSteps, int rigidBodyModesInterval, int rigidBodyModesDelay) {
+  Minimizer minimizer(this, tol, nSamples, tolEl, nSamplesEl, stepsizeEl, stepsizeElFallback, maxSteps, rigidBodyModesInterval, rigidBodyModesDelay);
   minimizer.exec();
 }
 

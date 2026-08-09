@@ -77,7 +77,10 @@ void wrap_ferromagnet(py::module& m) {
       .def("minimize", &Ferromagnet::minimize,
            py::arg("tol"), py::arg("nsamples"),
            py::arg("tol_el") = 1e-14, py::arg("nsamples_el") = 10,
-           py::arg("stepsize_el") = 1e-30, py::arg("stepsize_el_fallback") = 1e-30) 
+           py::arg("stepsize_el") = 1e-30, py::arg("stepsize_el_fallback") = 1e-30,
+           py::arg("max_steps") = 200000,
+           py::arg("rigid_body_modes_interval") = 1,
+           py::arg("rigid_body_modes_delay") = 0) 
      .def("relax", &Ferromagnet::relax, py::arg("tol"));
 
   m.def("torque", &torqueQuantity);

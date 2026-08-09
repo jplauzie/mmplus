@@ -283,8 +283,8 @@ RigidBodyGeometry computeRigidBodyGeometry(const Magnet* magnet) {
   return geom;
 }
 
-void removeRigidBodyModes(Field& f, const RigidBodyGeometry& geom,
-                          const Magnet* magnet) {
+RigidModeMoments computeRigidModeMoments(const Field& f, const RigidBodyGeometry& geom,
+                                         const Magnet* magnet) {
   CuParameter rho = magnet->rho.cu();
   int ncells = f.system()->grid().ncells();
   int numBlocks = numReductionBlocks(ncells);
@@ -306,14 +306,17 @@ void removeRigidBodyModes(Field& f, const RigidBodyGeometry& geom,
     rhoRxF.x += p.rhoRxF.x; rhoRxF.y += p.rhoRxF.y; rhoRxF.z += p.rhoRxF.z;
   }
 
-  double3 T = {rhoF.x / geom.totalRho, rhoF.y / geom.totalRho,
-              rhoF.z / geom.totalRho};
+  RigidModeMoments m;
+  m.T = {rhoF.x / geom.totalRho, rhoF.y / geom.totalRho, rhoF.z / geom.totalRho};
   double3 L = rhoRxF;
+  m.omega.x = geom.Iinv[0][0]*L.x + geom.Iinv[0][1]*L.y + geom.Iinv[0][2]*L.z;
+  m.omega.y = geom.Iinv[1][0]*L.x + geom.Iinv[1][1]*L.y + geom.Iinv[1][2]*L.z;
+  m.omega.z = geom.Iinv[2][0]*L.x + geom.Iinv[2][1]*L.y + geom.Iinv[2][2]*L.z;
+  return m;
+}
 
-  double3 omega;
-  omega.x = geom.Iinv[0][0]*L.x + geom.Iinv[0][1]*L.y + geom.Iinv[0][2]*L.z;
-  omega.y = geom.Iinv[1][0]*L.x + geom.Iinv[1][1]*L.y + geom.Iinv[1][2]*L.z;
-  omega.z = geom.Iinv[2][0]*L.x + geom.Iinv[2][1]*L.y + geom.Iinv[2][2]*L.z;
-
-  cudaLaunch(ncells, k_subtractRigidModes, f.cu(), geom.com, T, omega);
+void removeRigidBodyModes(Field& f, const RigidBodyGeometry& geom, const Magnet* magnet) {
+  RigidModeMoments m = computeRigidModeMoments(f, geom, magnet);
+  int ncells = f.system()->grid().ncells();
+  cudaLaunch(ncells, k_subtractRigidModes, f.cu(), geom.com, m.T, m.omega);
 }

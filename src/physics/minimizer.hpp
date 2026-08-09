@@ -28,21 +28,30 @@ class Minimizer {
             int nMagDiffSamples,
             real stopMaxElDiff,
             int nElDiffSamples,
-            real stepsizeEl = 1e-30, real stepsizeElFallback = 1e-30);
+            real stepsizeEl = 1e-30, real stepsizeElFallback = 1e-30,
+            int maxSteps = 200000,
+            int rigidBodyModesInterval = 1,
+            int rigidBodyModesDelay = 0);
 
   Minimizer(const HostMagnet* magnet,
             real stopMaxMagDiff,
             int nMagDiffSamples,
             real stopMaxElDiff,
             int nElDiffSamples,
-            real stepsizeEl = 1e-30, real stepsizeElFallback = 1e-30);
+            real stepsizeEl = 1e-30, real stepsizeElFallback = 1e-30,
+            int maxSteps = 200000,
+            int rigidBodyModesInterval = 1,
+            int rigidBodyModesDelay = 0);
 
   Minimizer(const MumaxWorld* world,
             real stopMaxMagDiff,
             int nMagDiffSamples,
             real stopMaxElDiff,
             int nElDiffSamples,
-            real stepsizeEl = 1e-30, real stepsizeElFallback = 1e-30);
+            real stepsizeEl = 1e-30, real stepsizeElFallback = 1e-30,
+            int maxSteps = 200000,
+            int rigidBodyModesInterval = 1,
+            int rigidBodyModesDelay = 0);
 
   void exec();
 
@@ -53,6 +62,7 @@ class Minimizer {
   bool converged() const;
   void addMagDiff(real dm);
   void addElDiff(real du);
+  bool shouldRemoveRigidBodyModes() const;   // NEW
 
   // --- magnetic part ---
   std::vector<const Ferromagnet*> magnets_;
@@ -77,5 +87,9 @@ class Minimizer {
   real stepsizeElInit_;
   real stepsizeElFallback_; 
 
+  
   int nsteps_;
+  int maxSteps_;                  
+  int rigidBodyModesInterval_;    
+  int rigidBodyModesDelay_;         
 };
