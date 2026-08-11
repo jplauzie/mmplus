@@ -145,7 +145,7 @@ class Ferromagnet(Magnet):
     def minimize(self, tol=1e-6, nsamples=10, tol_el=1e-6, nsamples_el=10,
                 stepsize_el=1e-30, stepsize_el_fallback=1e-30,
                 max_steps=200000, rigid_body_modes_interval=1,
-                rigid_body_modes_delay=0):
+                rigid_body_modes_delay=0, rigid_body_modes_method=0):
         """Minimize the total energy.
 
         Fast energy minimization, but less robust than :func:`relax`
@@ -193,7 +193,7 @@ class Ferromagnet(Magnet):
         relax
         """
         self._impl.minimize(tol, nsamples, tol_el, nsamples_el,
-                            stepsize_el, stepsize_el_fallback, max_steps, rigid_body_modes_interval, rigid_body_modes_delay)
+                            stepsize_el, stepsize_el_fallback, max_steps, rigid_body_modes_interval, rigid_body_modes_delay, rigid_body_modes_method)
     
     def relax(self, tol=1e-9):
         """Relax the state to an energy minimum.

@@ -279,6 +279,9 @@ RigidBodyGeometry computeRigidBodyGeometry(const Magnet* magnet) {
   RigidBodyGeometry geom;
   geom.com = comResult.com;
   geom.totalRho = comResult.totalRho;
+  for (int a = 0; a < 3; a++)
+  for (int b = 0; b < 3; b++)
+    geom.I[a][b] = I[a][b];   // NEW: stash before invert3x3 is called
   invert3x3(I, geom.Iinv);
   return geom;
 }

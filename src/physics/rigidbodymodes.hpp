@@ -8,6 +8,7 @@ class Field;
 struct RigidBodyGeometry {
   double3 com;       // mass-weighted center of mass, world units
   double Iinv[3][3]; // regularized pseudo-inverse of the mass-weighted inertia tensor about com
+  double I[3][3];      // NEW: raw inertia tensor, exposed for diagnostics/comparison
   double totalRho;   // sum of rho over the geometry (cell volume cancels out
                      // everywhere it would appear, so it's never needed).
                      // Precomputed once; assumes rho is static for the

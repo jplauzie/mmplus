@@ -76,6 +76,8 @@ add_library(physics STATIC
     relaxer.cpp
     rigidbodymodes.cu
     rigidbodymodes.hpp
+    rigidbodymodes2.cu
+    rigidbodymodes2.hpp
     straintensor.cu
     straintensor.hpp
     stresstensor.cu
