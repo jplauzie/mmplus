@@ -5,14 +5,10 @@
 
 #include "field.hpp"
 #include "quantityevaluator.hpp"
-<<<<<<< Updated upstream
-#include "rigidbodymodes.hpp"   
-=======
 #include "rigidbodymodes.hpp"
 #include "rigidbodymodes2.hpp"
 #include "rigidbodymodes3.hpp"
 #include "rigidbodymodes4.hpp"   
->>>>>>> Stashed changes
 
 class Ferromagnet;
 class HostMagnet;
@@ -76,12 +72,9 @@ class Minimizer {
   std::vector<const Magnet*> elMagnets_;
   std::vector<M_FieldQuantity> forces_;
   std::vector<RigidBodyGeometry> rigidGeoms_;
-<<<<<<< Updated upstream
-=======
   std::vector<RigidBodyModes2> rigidModes2_;
   std::vector<RigidBodyGeometry3> rigidGeoms3_;
   std::vector<RigidBodyGeometry4> rigidGeoms4_;
->>>>>>> Stashed changes
   std::vector<Field> f0, f1, u0, u1;
   std::vector<real> elStepsizes_;
   std::deque<real> lastElDiffs_;

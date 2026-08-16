@@ -22,13 +22,6 @@ namespace {
 void addElasticIfPresent(const Magnet* magnet,
                          std::vector<const Magnet*>& elMagnets,
                          std::vector<M_FieldQuantity>& forces,
-<<<<<<< Updated upstream
-                         std::vector<RigidBodyGeometry>& rigidGeoms) {
-  if (!elasticityAssuredZero(magnet)) {
-    elMagnets.push_back(magnet);
-    forces.push_back(effectiveBodyForceQuantity(magnet));
-    rigidGeoms.push_back(computeRigidBodyGeometry(magnet));
-=======
                          std::vector<RigidBodyGeometry>& rigidGeoms,
                          std::vector<RigidBodyModes2>& rigidModes2,
                          std::vector<RigidBodyGeometry3>& rigidGeoms3,
@@ -67,7 +60,6 @@ void addElasticIfPresent(const Magnet* magnet,
     rigidModes2.push_back(computeRigidBodyModes2(magnet));
     rigidGeoms3.push_back(g3);
     rigidGeoms4.push_back(g4);
->>>>>>> Stashed changes
   }
 }
 
@@ -105,11 +97,7 @@ Minimizer::Minimizer(const Ferromagnet* magnet,
       t0(1), t1(1), m0(1), m1(1) {
   stepsizes_ = {1e-14};  
 
-<<<<<<< Updated upstream
-    addElasticIfPresent(magnet, elMagnets_, forces_, rigidGeoms_);
-=======
   addElasticIfPresent(magnet, elMagnets_, forces_, rigidGeoms_, rigidModes2_, rigidGeoms3_, rigidGeoms4_);
->>>>>>> Stashed changes
   f0.resize(elMagnets_.size());
   f1.resize(elMagnets_.size());
   u0.resize(elMagnets_.size());
@@ -142,11 +130,7 @@ Minimizer::Minimizer(const HostMagnet* magnet,
     torques_.push_back(relaxTorqueQuantity(sub));
 
   
-<<<<<<< Updated upstream
-  addElasticIfPresent(magnet, elMagnets_, forces_, rigidGeoms_);
-=======
   addElasticIfPresent(magnet, elMagnets_, forces_, rigidGeoms_, rigidModes2_, rigidGeoms3_, rigidGeoms4_);
->>>>>>> Stashed changes
   f0.resize(elMagnets_.size());
   f1.resize(elMagnets_.size());
   u0.resize(elMagnets_.size());
@@ -187,11 +171,7 @@ Minimizer::Minimizer(const MumaxWorld* world,
     // independent Ferromagnet or per HostMagnet (AFM/NcAfm), never per
     // sublattice, so this check happens once per world->magnets() entry
     // regardless of how many magnetic sublattices it owns.
-<<<<<<< Updated upstream
-        addElasticIfPresent(mag, elMagnets_, forces_, rigidGeoms_);
-=======
         addElasticIfPresent(mag, elMagnets_, forces_, rigidGeoms_, rigidModes2_, rigidGeoms3_, rigidGeoms4_);
->>>>>>> Stashed changes
   }
 
   for (auto magnet : magnets_)
@@ -215,8 +195,6 @@ void Minimizer::exec() {
   lastMagDiffs_.clear();
   lastElDiffs_.clear();
 
-<<<<<<< Updated upstream
-=======
   
 
   // Since this should be equilibrium, gracefully zero out the velocity
@@ -242,7 +220,6 @@ void Minimizer::exec() {
               << std::endl;
   }
 
->>>>>>> Stashed changes
   bool magnetoelasticsActive = !elMagnets_.empty();
   if (!magnetoelasticsActive) {
     while (!converged())
@@ -540,8 +517,6 @@ bool Minimizer::converged() const {
   return magConverged && elConverged;
 }
 
-<<<<<<< Updated upstream
-=======
 bool Minimizer::shouldRemoveRigidBodyModes() const {
   if (rigidBodyModesInterval_ <= 0)
     return false;
@@ -606,7 +581,6 @@ void Minimizer::applyRigidBodyModeRemoval(Field& f, size_t i, const char* label)
   }
 }
 
->>>>>>> Stashed changes
 void Minimizer::addMagDiff(real dm) {
   lastMagDiffs_.push_back(dm);
   if (lastMagDiffs_.size() > nMagDiffSamples_)

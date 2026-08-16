@@ -285,16 +285,11 @@ RigidBodyGeometry computeRigidBodyGeometry(const Magnet* magnet) {
   //for (int d = 0; d < 3; d++) I[d][d] += lambda;
 
   RigidBodyGeometry geom;
-<<<<<<< Updated upstream
-  geom.com = comResult.com;
-  geom.totalRho = comResult.totalRho;
-=======
   geom.com = COM_result.com;
   geom.totalRho = COM_result.totalRho;
   for (int a = 0; a < 3; a++)
   for (int b = 0; b < 3; b++)
     geom.I[a][b] = I[a][b];
->>>>>>> Stashed changes
   invert3x3(I, geom.Iinv);
   return geom;
 }
@@ -307,30 +302,6 @@ void removeRigidBodyModes(Field& f, const RigidBodyGeometry& geom,
 
   TransRotPartial trp = reduceOnDevice<TransRotPartial>(numBlocks, k_transRotPartialSums, f.cu(), rho, geom.com);
 
-<<<<<<< Updated upstream
-  std::vector<TransRotPartial> partials(numBlocks);
-  checkCudaError(cudaMemcpyAsync(partials.data(), d_partials.get(),
-                                 numBlocks * sizeof(TransRotPartial),
-                                 cudaMemcpyDeviceToHost, getCudaStream()));
-  checkCudaError(cudaStreamSynchronize(getCudaStream()));
-
-  double3 rhoF{0, 0, 0}, rhoRxF{0, 0, 0};
-  for (const TransRotPartial& p : partials) {
-    rhoF.x += p.rhoF.x; rhoF.y += p.rhoF.y; rhoF.z += p.rhoF.z;
-    rhoRxF.x += p.rhoRxF.x; rhoRxF.y += p.rhoRxF.y; rhoRxF.z += p.rhoRxF.z;
-  }
-
-  double3 T = {rhoF.x / geom.totalRho, rhoF.y / geom.totalRho,
-              rhoF.z / geom.totalRho};
-  double3 L = rhoRxF;
-
-  double3 omega;
-  omega.x = geom.Iinv[0][0]*L.x + geom.Iinv[0][1]*L.y + geom.Iinv[0][2]*L.z;
-  omega.y = geom.Iinv[1][0]*L.x + geom.Iinv[1][1]*L.y + geom.Iinv[1][2]*L.z;
-  omega.z = geom.Iinv[2][0]*L.x + geom.Iinv[2][1]*L.y + geom.Iinv[2][2]*L.z;
-
-  cudaLaunch(ncells, k_subtractRigidModes, f.cu(), geom.com, T, omega);
-=======
   RigidModeMoments moments;
   moments.T = {trp.rhoF.x / geom.totalRho, trp.rhoF.y / geom.totalRho, trp.rhoF.z / geom.totalRho};
   double3 L = trp.rhoRxF;
@@ -345,5 +316,4 @@ void removeRigidBodyModes(Field& f, const RigidBodyGeometry& geom, const Magnet*
   RigidModeMoments moments = computeRigidModeMoments(f, geom, magnet);
   int ncells = f.system()->grid().ncells();
   cudaLaunch(ncells, k_subtractRigidModes, f.cu(), geom.com, moments.T, moments.omega);
->>>>>>> Stashed changes
 }
