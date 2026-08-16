@@ -294,8 +294,8 @@ RigidBodyGeometry computeRigidBodyGeometry(const Magnet* magnet) {
   return geom;
 }
 
-void removeRigidBodyModes(Field& f, const RigidBodyGeometry& geom,
-                          const Magnet* magnet) {
+RigidModeMoments computeRigidModeMoments(const Field& f, const RigidBodyGeometry& geom,
+                                         const Magnet* magnet) {
   CuParameter rho = magnet->rho.cu();
   int ncells = f.system()->grid().ncells();
   int numBlocks = numReductionBlocks(ncells);

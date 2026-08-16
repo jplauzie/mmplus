@@ -8,11 +8,22 @@ class Field;
 struct RigidBodyGeometry {
   double3 com;       // mass-weighted center of mass, world units
   double Iinv[3][3]; // regularized pseudo-inverse of the mass-weighted inertia tensor about com
+  double I[3][3];      // NEW: raw inertia tensor, exposed for diagnostics/comparison
   double totalRho;   // sum of rho over the geometry (cell volume cancels out
                      // everywhere it would appear, so it's never needed).
                      // Precomputed once; assumes rho is static for the
                      // duration of the minimization.
 };
+
+struct RigidModeMoments {
+  double3 T;      // rigid translation
+  double3 omega;  // rigid rotation
+};
+
+// Computes the rigid translation/rotation content of f without modifying it.
+RigidModeMoments computeRigidModeMoments(const Field& f,
+                                         const RigidBodyGeometry& geom,
+                                         const Magnet* magnet);
 
 /// One-time per-magnet setup: mass-weighted (geometry-aware) center of mass
 /// and inertia tensor, cached for reuse every minimizer step. No per-cell

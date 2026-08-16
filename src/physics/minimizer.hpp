@@ -31,21 +31,33 @@ class Minimizer {
             int nMagDiffSamples,
             real stopMaxElDiff,
             int nElDiffSamples,
-            real stepsizeEl = 1e-30, real stepsizeElFallback = 1e-30);
+            real stepsizeEl = 1e-30, real stepsizeElFallback = 1e-30,
+            int maxSteps = 200000,
+            int rigidBodyModesInterval = 1,
+            int rigidBodyModesDelay = 0,
+            int rigidBodyModesMethod = 0);
 
   Minimizer(const HostMagnet* magnet,
             real stopMaxMagDiff,
             int nMagDiffSamples,
             real stopMaxElDiff,
             int nElDiffSamples,
-            real stepsizeEl = 1e-30, real stepsizeElFallback = 1e-30);
+            real stepsizeEl = 1e-30, real stepsizeElFallback = 1e-30,
+            int maxSteps = 200000,
+            int rigidBodyModesInterval = 1,
+            int rigidBodyModesDelay = 0,
+            int rigidBodyModesMethod = 0);
 
   Minimizer(const MumaxWorld* world,
             real stopMaxMagDiff,
             int nMagDiffSamples,
             real stopMaxElDiff,
             int nElDiffSamples,
-            real stepsizeEl = 1e-30, real stepsizeElFallback = 1e-30);
+            real stepsizeEl = 1e-30, real stepsizeElFallback = 1e-30,
+            int maxSteps = 200000,
+            int rigidBodyModesInterval = 1,
+            int rigidBodyModesDelay = 0,
+            int rigidBodyModesMethod = 0);
 
   void exec();
 
@@ -56,6 +68,7 @@ class Minimizer {
   bool converged() const;
   void addMagDiff(real dm);
   void addElDiff(real du);
+ 
 
   // --- magnetic part ---
   std::vector<const Ferromagnet*> magnets_;
@@ -83,5 +96,19 @@ class Minimizer {
   real stepsizeElInit_;
   real stepsizeElFallback_; 
 
+  bool shouldRemoveRigidBodyModes() const;
+  // NEW: applies whichever method is toggled to f; for the first ~20
+  // steps, also computes and prints BOTH methods' output (T/omega vs.
+  // projection coefficients) to std::cerr regardless of toggle, tagged
+  // with `label`, so the two can be compared side by side. Only the
+  // toggled method ever mutates f. Temporary debug scaffolding -- strip
+  // or gate before merge.
+  void applyRigidBodyModeRemoval(Field& f, size_t i, const char* label);
+
+  
   int nsteps_;
+  int maxSteps_;                  
+  int rigidBodyModesInterval_;    
+  int rigidBodyModesDelay_;  
+  int rigidBodyModesMethod_;       
 };
