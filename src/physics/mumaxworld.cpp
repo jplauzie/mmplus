@@ -211,11 +211,11 @@ void MumaxWorld::cleanElasticRigidModesCallback() const {
     const RigidBodyGeometry& geom = it->second;
 
     Field u = magnet->elasticDisplacement()->eval();
-    removeRigidBodyModes(u, geom, magnet);
+    removeRigidBodyModes(u, geom, magnet, /*isForce=*/false);
     magnet->elasticDisplacement()->set(u);
 
     Field v = magnet->elasticVelocity()->eval();
-    removeRigidBodyModes(v, geom, magnet);
+    removeRigidBodyModes(v, geom, magnet, /*isForce=*/false);
     magnet->elasticVelocity()->set(v);
   }
 }

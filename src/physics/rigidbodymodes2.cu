@@ -75,30 +75,11 @@ double3 computeCom2(const Magnet* magnet) {
   return double3{sum.x / sum.w, sum.y / sum.w, sum.z / sum.w};
 }
 
-// ---- rotation mode construction: v(r) = axis x (r - com) ------------------
-// Single elementwise pass (not a reduction), so real3/float is fine here,
-// same precision argument as k_subtractRigidModes in rigidbodymodes.cu.
+// ---- generic inner product: rho-weighted (kinematic) or 1/rho-weighted
+//      (force) -- see rigidbodymodes2.hpp for which is which. ------------
 
-__global__ void k_setRotationMode(CuField f, real3 axis, real3 com) {
-  int idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (!f.cellInGrid(idx))
-    return;
-  if (!f.cellInGeometry(idx)) {
-    f.setVectorInCell(idx, real3{0, 0, 0});
-    return;
-  }
-
-  int3 coord = f.system.grid.index2coord(idx);
-  real3 pos = int3_to_real3(coord) * f.system.cellsize;
-  real3 r = pos - com;
-  f.setVectorInCell(idx, cross(axis, r));
-}
-
-// ---- mass-weighted inner product (double precision, single block) --------
-// Same reduction shape as reduce.cu's dotSum, but rho-weighted; not
-// available there, so implemented locally.
-
-__global__ void k_weightedDot(double* result, CuField a, CuField b, CuParameter rho) {
+__global__ void k_genericWeightedDot(double* result, CuField a, CuField b,
+                                     CuParameter rho, bool inverseWeight) {
   __shared__ double sdata[BLOCKDIM];
   int ncells = a.system.grid.ncells();
   int tid = threadIdx.x;
@@ -108,6 +89,10 @@ __global__ void k_weightedDot(double* result, CuField a, CuField b, CuParameter 
     if (!a.cellInGeometry(i))
       continue;
     double w = double(rho.valueAt(i));
+    if (inverseWeight) {
+      if (w <= 0.0) continue;  // guard, shouldn't happen inside geometry
+      w = 1.0 / w;
+    }
     real3 va = a.vectorAt(i);
     real3 vb = b.vectorAt(i);
     threadValue += w * (double(va.x) * double(vb.x) +
@@ -126,93 +111,59 @@ __global__ void k_weightedDot(double* result, CuField a, CuField b, CuParameter 
     *result = sdata[0];
 }
 
-double weightedDot(const Field& a, const Field& b, const Magnet* magnet) {
+double genericWeightedDot(const Field& a, const Field& b, const Magnet* magnet, bool inverseWeight) {
   CuParameter rho = magnet->rho.cu();
   GpuBuffer<double> d_result(1);
-  cudaLaunchReductionKernel(k_weightedDot, d_result.get(), a.cu(), b.cu(), rho);
+  cudaLaunchReductionKernel(k_genericWeightedDot, d_result.get(), a.cu(), b.cu(), rho, inverseWeight);
 
   double result;
   checkCudaError(cudaMemcpyAsync(&result, d_result.get(), sizeof(double),
                                  cudaMemcpyDeviceToHost, getCudaStream()));
   checkCudaError(cudaStreamSynchronize(getCudaStream()));
   return result;
+}
+
+// ---- generic mode construction: bare direction (kinematic) or
+//      rho(r)-scaled direction (force) -- see rigidbodymodes2.hpp --------
+
+__global__ void k_setTranslationModeGeneric(CuField f, real3 dir, CuParameter rho, bool scaleByRho) {
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (!f.cellInGrid(idx)) return;
+  if (!f.cellInGeometry(idx)) { f.setVectorInCell(idx, real3{0, 0, 0}); return; }
+  real scale = scaleByRho ? real(rho.valueAt(idx)) : real(1.0);
+  f.setVectorInCell(idx, scale * dir);
+}
+
+__global__ void k_setRotationModeGeneric(CuField f, real3 axis, real3 com,
+                                         CuParameter rho, bool scaleByRho) {
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (!f.cellInGrid(idx)) return;
+  if (!f.cellInGeometry(idx)) { f.setVectorInCell(idx, real3{0, 0, 0}); return; }
+  int3 coord = f.system.grid.index2coord(idx);
+  real3 pos = int3_to_real3(coord) * f.system.cellsize;
+  real3 r = pos - com;
+  real scale = scaleByRho ? real(rho.valueAt(idx)) : real(1.0);
+  f.setVectorInCell(idx, scale * cross(axis, r));
 }
 
 std::array<std::array<double, 3>, 3> inertiaViaProjectionImpl(const Magnet* magnet) {
   std::shared_ptr<const System> system = magnet->system();
   double3 comD = computeCom2(magnet);
   real3 com = {real(comD.x), real(comD.y), real(comD.z)};
+  CuParameter rho = magnet->rho.cu();
 
   real3 axes[3] = {real3{1, 0, 0}, real3{0, 1, 0}, real3{0, 0, 1}};
   Field rot[3] = {Field(system, 3), Field(system, 3), Field(system, 3)};
   for (int k = 0; k < 3; k++) {
     int ncells = rot[k].grid().ncells();
-    cudaLaunch(ncells, k_setRotationMode, rot[k].cu(), axes[k], com);
+    cudaLaunch(ncells, k_setRotationModeGeneric, rot[k].cu(), axes[k], com, rho, /*scaleByRho=*/false);
   }
 
   std::array<std::array<double, 3>, 3> I{};
   for (int i = 0; i < 3; i++)
     for (int j = 0; j < 3; j++)
-      I[i][j] = weightedDot(rot[i], rot[j], magnet);
+      I[i][j] = genericWeightedDot(rot[i], rot[j], magnet, /*inverseWeight=*/false);
   return I;
-}
-
-// ---- 1/rho-weighted inner product (force fields) --------------------------
-
-__global__ void k_invWeightedDot(double* result, CuField a, CuField b, CuParameter rho) {
-  __shared__ double sdata[BLOCKDIM];
-  int ncells = a.system.grid.ncells();
-  int tid = threadIdx.x;
-
-  double threadValue = 0.0;
-  for (int i = tid; i < ncells; i += BLOCKDIM) {
-    if (!a.cellInGeometry(i))
-      continue;
-    double w = double(rho.valueAt(i));
-    if (w <= 0.0) continue;  // guard, shouldn't happen inside geometry
-    real3 va = a.vectorAt(i);
-    real3 vb = b.vectorAt(i);
-    threadValue += (double(va.x)*double(vb.x) +
-                    double(va.y)*double(vb.y) +
-                    double(va.z)*double(vb.z)) / w;
-  }
-  sdata[tid] = threadValue;
-  __syncthreads();
-  for (unsigned int s = BLOCKDIM/2; s > 0; s >>= 1) {
-    if (tid < s) sdata[tid] += sdata[tid+s];
-    __syncthreads();
-  }
-  if (tid == 0) *result = sdata[0];
-}
-
-double invWeightedDot(const Field& a, const Field& b, const Magnet* magnet) {
-  CuParameter rho = magnet->rho.cu();
-  GpuBuffer<double> d_result(1);
-  cudaLaunchReductionKernel(k_invWeightedDot, d_result.get(), a.cu(), b.cu(), rho);
-  double result;
-  checkCudaError(cudaMemcpyAsync(&result, d_result.get(), sizeof(double),
-                                 cudaMemcpyDeviceToHost, getCudaStream()));
-  checkCudaError(cudaStreamSynchronize(getCudaStream()));
-  return result;
-}
-
-// ---- rho-scaled mode construction: w(r) = rho(r) * direction(r) -----------
-
-__global__ void k_setForceTranslationMode(CuField f, real3 dir, CuParameter rho) {
-  int idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (!f.cellInGrid(idx)) return;
-  if (!f.cellInGeometry(idx)) { f.setVectorInCell(idx, real3{0,0,0}); return; }
-  f.setVectorInCell(idx, real(rho.valueAt(idx)) * dir);
-}
-
-__global__ void k_setForceRotationMode(CuField f, real3 axis, real3 com, CuParameter rho) {
-  int idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (!f.cellInGrid(idx)) return;
-  if (!f.cellInGeometry(idx)) { f.setVectorInCell(idx, real3{0,0,0}); return; }
-  int3 coord = f.system.grid.index2coord(idx);
-  real3 pos = int3_to_real3(coord) * f.system.cellsize;
-  real3 r = pos - com;
-  f.setVectorInCell(idx, real(rho.valueAt(idx)) * cross(axis, r));
 }
 
 }  // namespace
@@ -221,55 +172,59 @@ std::array<std::array<double, 3>, 3> inertiaTensorViaProjection2(const Magnet* m
   return inertiaViaProjectionImpl(magnet);
 }
 
-std::array<double, 6> rigidBodyModeCoefficients2(const Field& f,
-                                                  const RigidBodyModes2& modes,
-                                                  const Magnet* magnet) {
+// isForce = false: kinematic (rho-weighted).
+// isForce = true: force (1/rho-weighted -- see rigidbodymodes2.hpp).
+double weightedDot(const Field& a, const Field& b, const Magnet* magnet, bool isForce) {
+  return genericWeightedDot(a, b, magnet, /*inverseWeight=*/isForce);
+}
+
+std::array<double, 6> rigidBodyModeCoefficients2(const Field& f, const RigidBodyModes2& modes,
+                                                  const Magnet* magnet, bool isForce) {
   std::array<double, 6> c;
   for (int k = 0; k < 6; k++)
-    c[k] = weightedDot(f, modes.modes[k], magnet);
+    c[k] = weightedDot(f, modes.modes[k], magnet, isForce);
   return c;
 }
 
-
-
-
-RigidBodyModes2 computeRigidBodyModes2(const Magnet* magnet) {
+RigidBodyModes2 computeRigidBodyModes2(const Magnet* magnet, bool isForce) {
   std::shared_ptr<const System> system = magnet->system();
 
   double3 comD = computeCom2(magnet);
   real3 com = {real(comD.x), real(comD.y), real(comD.z)};
+  CuParameter rho = magnet->rho.cu();
 
   RigidBodyModes2 result;
 
-  // Translation modes: uniform unit vectors. Field's real3-valued
-  // constructor already masks outside geometry (see field.cu
-  // k_setVectorValue), so no custom kernel needed.
-  result.modes[0] = Field(system, 3, real3{1, 0, 0});
-  result.modes[1] = Field(system, 3, real3{0, 1, 0});
-  result.modes[2] = Field(system, 3, real3{0, 0, 1});
+  // Translation modes: unit direction, rho(r)-scaled if isForce.
+  real3 dirs[3] = {real3{1, 0, 0}, real3{0, 1, 0}, real3{0, 0, 1}};
+  for (int k = 0; k < 3; k++) {
+    result.modes[k] = Field(system, 3);
+    int ncells = result.modes[k].grid().ncells();
+    cudaLaunch(ncells, k_setTranslationModeGeneric, result.modes[k].cu(), dirs[k], rho, isForce);
+  }
 
-  // Rotation modes: v(r) = axis x (r - com), zero outside geometry.
-  real3 axes[3] = {real3{1, 0, 0}, real3{0, 1, 0}, real3{0, 0, 1}};
+  // Rotation modes: v(r) = axis x (r - com), rho(r)-scaled if isForce,
+  // zero outside geometry.
   for (int k = 0; k < 3; k++) {
     result.modes[3 + k] = Field(system, 3);
     int ncells = result.modes[3 + k].grid().ncells();
-    cudaLaunch(ncells, k_setRotationMode, result.modes[3 + k].cu(), axes[k], com);
+    cudaLaunch(ncells, k_setRotationModeGeneric, result.modes[3 + k].cu(), dirs[k], com, rho, isForce);
   }
 
-  // Modified Gram-Schmidt, mass-weighted inner product. Translations are
-  // already exactly orthogonal to each other and (analytically, given an
-  // exact center of mass: sum(rho * r) = 0 by definition) to the
-  // rotations -- so this mainly orthogonalizes the 3 rotation modes
-  // against each other. That's the direct-projection equivalent of
-  // diagonalizing the inertia tensor, but without ever forming or
-  // inverting a 3x3 matrix.
+  // Modified Gram-Schmidt, under the rho-weighted (kinematic) or
+  // 1/rho-weighted (force) inner product. Translations are already
+  // exactly orthogonal to each other and (analytically, given an exact
+  // center of mass) to the rotations -- so this mainly orthogonalizes the
+  // 3 rotation modes against each other. That's the direct-projection
+  // equivalent of diagonalizing the inertia tensor, but without ever
+  // forming or inverting a 3x3 matrix.
   const double normEpsilon = 1e-12;  // TODO: tune, or scale relative to system size
   for (int k = 0; k < 6; k++) {
     for (int j = 0; j < k; j++) {
-      double c = weightedDot(result.modes[k], result.modes[j], magnet);
+      double c = weightedDot(result.modes[k], result.modes[j], magnet, isForce);
       addTo(result.modes[k], real(-c), result.modes[j]);
     }
-    double normSq = weightedDot(result.modes[k], result.modes[k], magnet);
+    double normSq = weightedDot(result.modes[k], result.modes[k], magnet, isForce);
     double norm = std::sqrt(std::max(normSq, 0.0));
     if (norm > normEpsilon) {
       result.modes[k] = real(1.0 / norm) * result.modes[k];
@@ -285,53 +240,10 @@ RigidBodyModes2 computeRigidBodyModes2(const Magnet* magnet) {
   return result;
 }
 
-void removeRigidBodyModes2(Field& f, const RigidBodyModes2& modes, const Magnet* magnet) {
+void removeRigidBodyModes2(Field& f, const RigidBodyModes2& modes,
+                           const Magnet* magnet, bool isForce) {
   for (int k = 0; k < 6; k++) {
-    double c = weightedDot(f, modes.modes[k], magnet);
-    addTo(f, real(-c), modes.modes[k]);
-  }
-}
-
-RigidBodyModes2 computeRigidBodyModes2Force(const Magnet* magnet) {
-  std::shared_ptr<const System> system = magnet->system();
-  double3 comD = computeCom2(magnet);
-  real3 com = {real(comD.x), real(comD.y), real(comD.z)};
-  CuParameter rho = magnet->rho.cu();
-
-  RigidBodyModes2 result;
-  real3 dirs[3] = {real3{1,0,0}, real3{0,1,0}, real3{0,0,1}};
-
-  for (int k = 0; k < 3; k++) {
-    result.modes[k] = Field(system, 3);
-    int ncells = result.modes[k].grid().ncells();
-    cudaLaunch(ncells, k_setForceTranslationMode, result.modes[k].cu(), dirs[k], rho);
-  }
-  for (int k = 0; k < 3; k++) {
-    result.modes[3+k] = Field(system, 3);
-    int ncells = result.modes[3+k].grid().ncells();
-    cudaLaunch(ncells, k_setForceRotationMode, result.modes[3+k].cu(), dirs[k], com, rho);
-  }
-
-  const double normEpsilon = 1e-12;
-  for (int k = 0; k < 6; k++) {
-    for (int j = 0; j < k; j++) {
-      double c = invWeightedDot(result.modes[k], result.modes[j], magnet);
-      addTo(result.modes[k], real(-c), result.modes[j]);
-    }
-    double normSq = invWeightedDot(result.modes[k], result.modes[k], magnet);
-    double norm = std::sqrt(std::max(normSq, 0.0));
-    if (norm > normEpsilon) {
-      result.modes[k] = real(1.0 / norm) * result.modes[k];
-    } else {
-      result.modes[k].makeZero();
-    }
-  }
-  return result;
-}
-
-void removeRigidBodyModes2Force(Field& f, const RigidBodyModes2& modes, const Magnet* magnet) {
-  for (int k = 0; k < 6; k++) {
-    double c = invWeightedDot(f, modes.modes[k], magnet);
+    double c = weightedDot(f, modes.modes[k], magnet, isForce);
     addTo(f, real(-c), modes.modes[k]);
   }
 }

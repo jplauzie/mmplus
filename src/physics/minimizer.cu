@@ -14,12 +14,11 @@
 #include "internalbodyforce.hpp"
 #include <cstdint>
 #include <cstring>
-#include <fstream> 
+#include <fstream>
 #include <iomanip>
 #include <array>
 #include <iostream>
 #include <cmath>
-
 
 
 
@@ -66,13 +65,13 @@ void addElasticIfPresent(const Magnet* magnet,
     }
 
     rigidGeoms.push_back(g0);
-    rigidModes2.push_back(computeRigidBodyModes2(magnet));
-    rigidModes2Force.push_back(computeRigidBodyModes2Force(magnet));
+    rigidModes2.push_back(computeRigidBodyModes2(magnet, false));
+    rigidModes2Force.push_back(computeRigidBodyModes2(magnet, true));
     rigidGeoms3.push_back(g3);
     rigidGeoms4.push_back(g4);
   }
 }
-} 
+}
 
 Minimizer::Minimizer(const Ferromagnet* magnet,
                      real stopMaxMagDiff,
@@ -92,9 +91,9 @@ Minimizer::Minimizer(const Ferromagnet* magnet,
       nElDiffSamples_(nElDiffSamples),
       stopMaxElDiff_(stopMaxElDiff),
       t0(1), t1(1), m0(1), m1(1) {
-  stepsizes_ = {1e-14};  
+  stepsizes_ = {1e-14};
 
-  addElasticIfPresent(magnet, elMagnets_, forces_, rigidGeoms_, rigidModes2_,rigidModes2Force_, rigidGeoms3_, rigidGeoms4_);
+  addElasticIfPresent(magnet, elMagnets_, forces_, rigidGeoms_, rigidModes2_, rigidModes2Force_, rigidGeoms3_, rigidGeoms4_);
   f0.resize(elMagnets_.size());
   f1.resize(elMagnets_.size());
   u0.resize(elMagnets_.size());
@@ -102,9 +101,9 @@ Minimizer::Minimizer(const Ferromagnet* magnet,
   elStepsizes_.assign(elMagnets_.size(), stepsizeEl);
   stepsizeElInit_ = stepsizeEl;
   stepsizeElFallback_ = stepsizeElFallback;
-  maxSteps_ = maxSteps;                              
-  rigidBodyModesInterval_ = rigidBodyModesInterval;   
-  rigidBodyModesDelay_ = rigidBodyModesDelay;         
+  maxSteps_ = maxSteps;
+  rigidBodyModesInterval_ = rigidBodyModesInterval;
+  rigidBodyModesDelay_ = rigidBodyModesDelay;
   rigidBodyModesMethod_ = rigidBodyModesMethod;
 }
 
@@ -129,11 +128,11 @@ Minimizer::Minimizer(const HostMagnet* magnet,
       m0(magnets_.size()),
       m1(magnets_.size()) {
   stepsizes_.assign(magnets_.size(), 1e-14);
-  
+
   for (auto sub : magnets_)
     torques_.push_back(relaxTorqueQuantity(sub));
 
-  
+
   addElasticIfPresent(magnet, elMagnets_, forces_, rigidGeoms_, rigidModes2_, rigidModes2Force_, rigidGeoms3_, rigidGeoms4_);
   f0.resize(elMagnets_.size());
   f1.resize(elMagnets_.size());
@@ -142,10 +141,10 @@ Minimizer::Minimizer(const HostMagnet* magnet,
   elStepsizes_.assign(elMagnets_.size(), stepsizeEl);
   stepsizeElInit_ = stepsizeEl;
   stepsizeElFallback_ = stepsizeElFallback;
-  maxSteps_ = maxSteps;                             
-  rigidBodyModesInterval_ = rigidBodyModesInterval; 
+  maxSteps_ = maxSteps;
+  rigidBodyModesInterval_ = rigidBodyModesInterval;
   rigidBodyModesDelay_ = rigidBodyModesDelay;
-  rigidBodyModesMethod_ = rigidBodyModesMethod;       
+  rigidBodyModesMethod_ = rigidBodyModesMethod;
 }
 
 Minimizer::Minimizer(const MumaxWorld* world,
@@ -199,10 +198,10 @@ Minimizer::Minimizer(const MumaxWorld* world,
   elStepsizes_.assign(elMagnets_.size(), stepsizeEl);
   stepsizeElInit_ = stepsizeEl;
   stepsizeElFallback_ = stepsizeElFallback;
-  maxSteps_ = maxSteps;                              
-  rigidBodyModesInterval_ = rigidBodyModesInterval;   
+  maxSteps_ = maxSteps;
+  rigidBodyModesInterval_ = rigidBodyModesInterval;
   rigidBodyModesDelay_ = rigidBodyModesDelay;
-  rigidBodyModesMethod_ = rigidBodyModesMethod;       
+  rigidBodyModesMethod_ = rigidBodyModesMethod;
 }
 
 
@@ -211,20 +210,16 @@ void Minimizer::exec() {
   lastMagDiffs_.clear();
   lastElDiffs_.clear();
 
-  
-
   // Since this should be equilibrium, gracefully zero out the velocity
   for (size_t i = 0; i < elMagnets_.size(); i++){
     elMagnets_[i]->elasticVelocity()->set(real3{0, 0, 0});
   }
 
-  
-
   // Check the state as handed off from the dynamic solver, before any
   // minimizer steps or rigid-mode removal have touched it.
   for (size_t i = 0; i < elMagnets_.size(); i++) {
     Field u0init = elMagnets_[i]->elasticDisplacement()->eval();
-    RigidModeMoments m = computeRigidModeMoments(u0init, rigidGeoms_[i], elMagnets_[i]);
+    RigidModeMoments m = computeRigidModeMoments(u0init, rigidGeoms_[i], elMagnets_[i], /*isForce=*/false);
     double thetaNorm = std::sqrt(m.omega.x * m.omega.x +
                                  m.omega.y * m.omega.y +
                                  m.omega.z * m.omega.z);
@@ -243,7 +238,7 @@ void Minimizer::exec() {
     return;
   }
 
-  
+
   while (!converged() && nsteps_ < maxSteps_) {
     step();
   }
@@ -335,13 +330,13 @@ void Minimizer::stepMagnetic() {
 void Minimizer::stepElastic() {
   for (size_t i = 0; i < elMagnets_.size(); i++) {
     u0[i] = elMagnets_[i]->elasticDisplacement()->eval();
-    if (shouldRemoveRigidBodyModes()) applyRigidBodyModeRemoval(u0[i], i, "u0");
-    
+    //if (shouldRemoveRigidBodyModes()) applyRigidBodyModeRemoval(u0[i], i, "u0");
+
 
     if (nsteps_ == 0) {
       elMagnets_[i]->elasticDisplacement()->set(u0[i]);
       f0[i] = forces_[i].eval();
-      if (shouldRemoveRigidBodyModes()) applyRigidBodyModeRemoval(f0[i], i, "f0");
+      //if (shouldRemoveRigidBodyModes()) applyRigidBodyModeRemoval(f0[i], i, "f0");
     } else {
       f0[i] = f1[i];
     }
@@ -478,11 +473,6 @@ bool Minimizer::shouldRemoveRigidBodyModes() const {
 }
 
 void Minimizer::applyRigidBodyModeRemoval(Field& f, size_t i, const char* label) {
-  // ---- TEMPORARY: toggle to compare old (unweighted) vs new
-  // (mass-weighted) force cleaning on overall convergence. Set to true to
-  // reproduce pre-fix behavior for force fields. Remove once comparison is done.
-  constexpr bool kForceUseOldMethod = false;
-
   bool isForce = (label == std::string("f0") ||
                   label == std::string("f1") ||
                   label == std::string("dg"));
@@ -493,29 +483,41 @@ void Minimizer::applyRigidBodyModeRemoval(Field& f, size_t i, const char* label)
     real rawNorm = maxVecNorm(f);
 
     if (isForce) {
-      NetForceTorqueDumb rawCheck = computeNetForceTorqueDumbLoop(f, elMagnets_[i]);
+      // Correct (rho-aware) cleaning, both implementations.
+      Field cleaned0 = f, cleaned1 = f;
+      removeRigidBodyModes(cleaned0, rigidGeoms_[i], elMagnets_[i], /*isForce=*/true);
+      removeRigidBodyModes2(cleaned1, rigidModes2Force_[i], elMagnets_[i], /*isForce=*/true);
 
-      Field cleaned0 = f;
-      removeRigidBodyModesForce(cleaned0, rigidGeoms_[i], elMagnets_[i]);
-      NetForceTorqueDumb cleanedCheck = computeNetForceTorqueDumbLoop(cleaned0, elMagnets_[i]);
+      // Naive/old comparison baseline: apply the *kinematic* (rho-unaware)
+      // treatment directly to a force field. Known-wrong for spatially
+      // varying rho -- kept here purely as a comparison signal, not a
+      // candidate for actual use. Reuses rigidGeoms_/rigidModes2_ (the
+      // kinematic geometry/basis) with isForce=false, which reproduces the
+      // pre-fix behavior exactly.
+      Field cleanedOld0 = f, cleanedOld1 = f;
+      removeRigidBodyModes(cleanedOld0, rigidGeoms_[i], elMagnets_[i], /*isForce=*/false);
+      removeRigidBodyModes2(cleanedOld1, rigidModes2_[i], elMagnets_[i], /*isForce=*/false);
 
-      Field cleanedOld0 = f;
-      removeRigidBodyModes(cleanedOld0, rigidGeoms_[i], elMagnets_[i]);
-      NetForceTorqueDumb cleanedOldCheck = computeNetForceTorqueDumbLoop(cleanedOld0, elMagnets_[i]);
-
-      auto mag3 = [](double3 v) { return std::sqrt(v.x*v.x + v.y*v.y + v.z*v.z); };
+      real n0    = maxVecNorm(cleaned0);
+      real n1    = maxVecNorm(cleaned1);
+      real nOld0 = maxVecNorm(cleanedOld0);
+      real nOld1 = maxVecNorm(cleanedOld1);
+      real diff0vsOld0 = maxVecNorm(add(real(1), cleaned0, real(-1), cleanedOld0));
+      real diff1vsOld1 = maxVecNorm(add(real(1), cleaned1, real(-1), cleanedOld1));
 
       std::cerr << std::setprecision(8)
-                << "[rbm-netcheck] step=" << nsteps_ << " field=" << label << " i=" << i
-                << " |F_raw|=" << mag3(rawCheck.netForce) << " |tau_raw|=" << mag3(rawCheck.netTorque)
-                << " |F_new|=" << mag3(cleanedCheck.netForce) << " |tau_new|=" << mag3(cleanedCheck.netTorque)
-                << " |F_old|=" << mag3(cleanedOldCheck.netForce) << " |tau_old|=" << mag3(cleanedOldCheck.netTorque)
+                << "[rbm-diag-force] step=" << nsteps_ << " field=" << label << " i=" << i
+                << " raw|f|=" << rawNorm
+                << " |new0|=" << n0 << " |new1|=" << n1
+                << " |old0|=" << nOld0 << " |old1|=" << nOld1
+                << " |new0-old0|=" << diff0vsOld0
+                << " |new1-old1|=" << diff1vsOld1
                 << std::endl;
     } else {
       // Linearized (small-rotation) methods.
-      RigidModeMoments m0 = computeRigidModeMoments(f, rigidGeoms_[i], elMagnets_[i]);
+      RigidModeMoments m0 = computeRigidModeMoments(f, rigidGeoms_[i], elMagnets_[i], /*isForce=*/false);
       double omegaNorm = std::sqrt(m0.omega.x*m0.omega.x + m0.omega.y*m0.omega.y + m0.omega.z*m0.omega.z);
-      std::array<double, 6> c1raw = rigidBodyModeCoefficients2(f, rigidModes2_[i], elMagnets_[i]);
+      std::array<double, 6> c1raw = rigidBodyModeCoefficients2(f, rigidModes2_[i], elMagnets_[i], /*isForce=*/false);
       double c1RotNorm = std::sqrt(c1raw[3]*c1raw[3] + c1raw[4]*c1raw[4] + c1raw[5]*c1raw[5]);
 
       // Exact (large-rotation) methods.
@@ -524,15 +526,17 @@ void Minimizer::applyRigidBodyModeRemoval(Field& f, size_t i, const char* label)
       double thetaKabsch = kabschRotationAngle(kb);
       double thetaQuat = quaternionRotationAngle(qr);
 
+      // Apply all four to independent copies of the same raw f, diff directly
+      // -- isolates per-cleaning discrepancy from trajectory effects.
       Field cleaned0 = f, cleaned1 = f, cleaned2 = f, cleaned3 = f;
-      removeRigidBodyModes(cleaned0, rigidGeoms_[i], elMagnets_[i]);
-      removeRigidBodyModes2(cleaned1, rigidModes2_[i], elMagnets_[i]);
+      removeRigidBodyModes(cleaned0, rigidGeoms_[i], elMagnets_[i], /*isForce=*/false);
+      removeRigidBodyModes2(cleaned1, rigidModes2_[i], elMagnets_[i], /*isForce=*/false);
       removeRigidBodyModesKabsch(cleaned2, rigidGeoms3_[i], elMagnets_[i]);
       removeRigidBodyModesQuaternion(cleaned3, rigidGeoms4_[i], elMagnets_[i]);
 
       real diff01 = maxVecNorm(add(real(1), cleaned0, real(-1), cleaned1));
       real diff02 = maxVecNorm(add(real(1), cleaned0, real(-1), cleaned2));
-      real diff23 = maxVecNorm(add(real(1), cleaned2, real(-1), cleaned3));
+      real diff23 = maxVecNorm(add(real(1), cleaned2, real(-1), cleaned3));  // kabsch vs quat: should be ~0
 
       std::cerr << std::setprecision(8)
                 << "[rbm-diag] step=" << nsteps_ << " field=" << label << " i=" << i
@@ -554,38 +558,25 @@ void Minimizer::applyRigidBodyModeRemoval(Field& f, size_t i, const char* label)
 
   // ---- the actual removal: exactly one call, dispatched on field type ----
   if (isForce) {
-    if (kForceUseOldMethod) {
-      // TEMPORARY: pre-fix behavior, unweighted kinematic-style removal
-      // applied directly to a force field. Known-wrong for spatially
-      // varying rho -- for comparison runs only.
-      switch (rigidBodyModesMethod_) {
-        case 0: removeRigidBodyModes(f, rigidGeoms_[i], elMagnets_[i]); break;
-        case 1: removeRigidBodyModes2(f, rigidModes2_[i], elMagnets_[i]); break;
-        case 2:
-        case 3:
-          throw std::runtime_error(
-              "Minimizer: rigidBodyModesMethod_ 2/3 have no force-aware "
-              "implementation (old or new) yet.");
-        default:
-          throw std::runtime_error("Minimizer: unknown rigidBodyModesMethod_ (expected 0-3).");
-      }
-    } else {
-      switch (rigidBodyModesMethod_) {
-        case 0: removeRigidBodyModesForce(f, rigidGeoms_[i], elMagnets_[i]); break;
-        case 1: removeRigidBodyModes2Force(f, rigidModes2Force_[i], elMagnets_[i]); break;
-        case 2:
-        case 3:
-          throw std::runtime_error(
-              "Minimizer: rigidBodyModesMethod_ 2/3 have no force-aware "
-              "implementation yet; only methods 0 and 1 support force fields.");
-        default:
-          throw std::runtime_error("Minimizer: unknown rigidBodyModesMethod_ (expected 0-3).");
-      }
+    switch (rigidBodyModesMethod_) {
+      case 0:
+        removeRigidBodyModes(f, rigidGeoms_[i], elMagnets_[i], /*isForce=*/true);
+        break;
+      case 1:
+        removeRigidBodyModes2(f, rigidModes2Force_[i], elMagnets_[i], /*isForce=*/true);
+        break;
+      case 2:
+      case 3:
+        throw std::runtime_error(
+            "Minimizer: rigidBodyModesMethod_ 2/3 have no force-aware "
+            "implementation yet; only methods 0 and 1 support force fields.");
+      default:
+        throw std::runtime_error("Minimizer: unknown rigidBodyModesMethod_ (expected 0-3).");
     }
   } else {
     switch (rigidBodyModesMethod_) {
-      case 0: removeRigidBodyModes(f, rigidGeoms_[i], elMagnets_[i]); break;
-      case 1: removeRigidBodyModes2(f, rigidModes2_[i], elMagnets_[i]); break;
+      case 0: removeRigidBodyModes(f, rigidGeoms_[i], elMagnets_[i], /*isForce=*/false); break;
+      case 1: removeRigidBodyModes2(f, rigidModes2_[i], elMagnets_[i], /*isForce=*/false); break;
       case 2: removeRigidBodyModesKabsch(f, rigidGeoms3_[i], elMagnets_[i]); break;
       case 3: removeRigidBodyModesQuaternion(f, rigidGeoms4_[i], elMagnets_[i]); break;
       default:
