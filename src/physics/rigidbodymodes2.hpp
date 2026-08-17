@@ -49,3 +49,6 @@ void removeRigidBodyModes2(Field& f, const RigidBodyModes2& modes, const Magnet*
 std::array<double, 6> rigidBodyModeCoefficients2(const Field& f,
                                                   const RigidBodyModes2& modes,
                                                   const Magnet* magnet);
+
+RigidBodyModes2 computeRigidBodyModes2Force(const Magnet* magnet);
+void removeRigidBodyModes2Force(Field& f, const RigidBodyModes2& modes, const Magnet* magnet);

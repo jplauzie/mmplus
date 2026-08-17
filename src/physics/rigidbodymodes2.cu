@@ -157,6 +157,64 @@ std::array<std::array<double, 3>, 3> inertiaViaProjectionImpl(const Magnet* magn
   return I;
 }
 
+// ---- 1/rho-weighted inner product (force fields) --------------------------
+
+__global__ void k_invWeightedDot(double* result, CuField a, CuField b, CuParameter rho) {
+  __shared__ double sdata[BLOCKDIM];
+  int ncells = a.system.grid.ncells();
+  int tid = threadIdx.x;
+
+  double threadValue = 0.0;
+  for (int i = tid; i < ncells; i += BLOCKDIM) {
+    if (!a.cellInGeometry(i))
+      continue;
+    double w = double(rho.valueAt(i));
+    if (w <= 0.0) continue;  // guard, shouldn't happen inside geometry
+    real3 va = a.vectorAt(i);
+    real3 vb = b.vectorAt(i);
+    threadValue += (double(va.x)*double(vb.x) +
+                    double(va.y)*double(vb.y) +
+                    double(va.z)*double(vb.z)) / w;
+  }
+  sdata[tid] = threadValue;
+  __syncthreads();
+  for (unsigned int s = BLOCKDIM/2; s > 0; s >>= 1) {
+    if (tid < s) sdata[tid] += sdata[tid+s];
+    __syncthreads();
+  }
+  if (tid == 0) *result = sdata[0];
+}
+
+double invWeightedDot(const Field& a, const Field& b, const Magnet* magnet) {
+  CuParameter rho = magnet->rho.cu();
+  GpuBuffer<double> d_result(1);
+  cudaLaunchReductionKernel(k_invWeightedDot, d_result.get(), a.cu(), b.cu(), rho);
+  double result;
+  checkCudaError(cudaMemcpyAsync(&result, d_result.get(), sizeof(double),
+                                 cudaMemcpyDeviceToHost, getCudaStream()));
+  checkCudaError(cudaStreamSynchronize(getCudaStream()));
+  return result;
+}
+
+// ---- rho-scaled mode construction: w(r) = rho(r) * direction(r) -----------
+
+__global__ void k_setForceTranslationMode(CuField f, real3 dir, CuParameter rho) {
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (!f.cellInGrid(idx)) return;
+  if (!f.cellInGeometry(idx)) { f.setVectorInCell(idx, real3{0,0,0}); return; }
+  f.setVectorInCell(idx, real(rho.valueAt(idx)) * dir);
+}
+
+__global__ void k_setForceRotationMode(CuField f, real3 axis, real3 com, CuParameter rho) {
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (!f.cellInGrid(idx)) return;
+  if (!f.cellInGeometry(idx)) { f.setVectorInCell(idx, real3{0,0,0}); return; }
+  int3 coord = f.system.grid.index2coord(idx);
+  real3 pos = int3_to_real3(coord) * f.system.cellsize;
+  real3 r = pos - com;
+  f.setVectorInCell(idx, real(rho.valueAt(idx)) * cross(axis, r));
+}
+
 }  // namespace
 
 std::array<std::array<double, 3>, 3> inertiaTensorViaProjection2(const Magnet* magnet) {
@@ -230,6 +288,50 @@ RigidBodyModes2 computeRigidBodyModes2(const Magnet* magnet) {
 void removeRigidBodyModes2(Field& f, const RigidBodyModes2& modes, const Magnet* magnet) {
   for (int k = 0; k < 6; k++) {
     double c = weightedDot(f, modes.modes[k], magnet);
+    addTo(f, real(-c), modes.modes[k]);
+  }
+}
+
+RigidBodyModes2 computeRigidBodyModes2Force(const Magnet* magnet) {
+  std::shared_ptr<const System> system = magnet->system();
+  double3 comD = computeCom2(magnet);
+  real3 com = {real(comD.x), real(comD.y), real(comD.z)};
+  CuParameter rho = magnet->rho.cu();
+
+  RigidBodyModes2 result;
+  real3 dirs[3] = {real3{1,0,0}, real3{0,1,0}, real3{0,0,1}};
+
+  for (int k = 0; k < 3; k++) {
+    result.modes[k] = Field(system, 3);
+    int ncells = result.modes[k].grid().ncells();
+    cudaLaunch(ncells, k_setForceTranslationMode, result.modes[k].cu(), dirs[k], rho);
+  }
+  for (int k = 0; k < 3; k++) {
+    result.modes[3+k] = Field(system, 3);
+    int ncells = result.modes[3+k].grid().ncells();
+    cudaLaunch(ncells, k_setForceRotationMode, result.modes[3+k].cu(), dirs[k], com, rho);
+  }
+
+  const double normEpsilon = 1e-12;
+  for (int k = 0; k < 6; k++) {
+    for (int j = 0; j < k; j++) {
+      double c = invWeightedDot(result.modes[k], result.modes[j], magnet);
+      addTo(result.modes[k], real(-c), result.modes[j]);
+    }
+    double normSq = invWeightedDot(result.modes[k], result.modes[k], magnet);
+    double norm = std::sqrt(std::max(normSq, 0.0));
+    if (norm > normEpsilon) {
+      result.modes[k] = real(1.0 / norm) * result.modes[k];
+    } else {
+      result.modes[k].makeZero();
+    }
+  }
+  return result;
+}
+
+void removeRigidBodyModes2Force(Field& f, const RigidBodyModes2& modes, const Magnet* magnet) {
+  for (int k = 0; k < 6; k++) {
+    double c = invWeightedDot(f, modes.modes[k], magnet);
     addTo(f, real(-c), modes.modes[k]);
   }
 }

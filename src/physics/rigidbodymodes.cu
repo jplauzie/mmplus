@@ -24,7 +24,7 @@ int numReductionBlocks(int ncells) {
 }
 
 // Double-precision cell position. cellsize is f32 (CuSystem::cellsize is real3), avoids compounding additional rounding in
-// everything downstream (com subtraction, cross products, sums). maybe unnecessary?
+// everything downstream (com subtraction, cross products, sums). f64 maybe unnecessary?
 __device__ inline double3 cellPositionDeviceD(const CuSystem& system, int idx) {
   int3 coord = system.grid.index2coord(idx);
   return double3{double(coord.x) * double(system.cellsize.x),
@@ -47,8 +47,6 @@ __host__ __device__ inline double3 crossD3(double3 a, double3 b) {
 __host__ __device__ inline double4 operator+(double4 a, double4 b) {
   return {a.x + b.x, a.y + b.y, a.z + b.z, a.w + b.w};
 }
-
-// ---- shared block-reduction helper (all pass kernels use this) -----------
 
 template <int NFIELDS>
 __device__ inline void blockReduceSum(double sdata[NFIELDS][BLOCKDIM], int tid) {
@@ -316,4 +314,82 @@ void removeRigidBodyModes(Field& f, const RigidBodyGeometry& geom, const Magnet*
   RigidModeMoments moments = computeRigidModeMoments(f, geom, magnet);
   int ncells = f.system()->grid().ncells();
   cudaLaunch(ncells, k_subtractRigidModes, f.cu(), geom.com, moments.T, moments.omega);
+}
+
+// ---- force moments: NO rho weight in the sums (F_net, tau_net are exact sums) ----
+
+__global__ void k_forceMomentPartialSums(TransRotPartial* blockSums, CuField f, double3 com) {
+  __shared__ double sdata[6][BLOCKDIM];
+  int ncells = f.system.grid.ncells();
+  int tid = threadIdx.x;
+  int gid = blockIdx.x * blockDim.x + threadIdx.x;
+  int stride = blockDim.x * gridDim.x;
+
+  double accumulator[6] = {0, 0, 0, 0, 0, 0};
+  for (int i = gid; i < ncells; i += stride) {
+    if (!f.cellInGeometry(i))
+      continue;
+    real3 f_real = f.vectorAt(i);
+    double3 fd = {double(f_real.x), double(f_real.y), double(f_real.z)};
+    accumulator[0] += fd.x; accumulator[1] += fd.y; accumulator[2] += fd.z;
+
+    double3 r = subD3(cellPositionDeviceD(f.system, i), com);
+    double3 rxf = crossD3(r, fd);
+    accumulator[3] += rxf.x; accumulator[4] += rxf.y; accumulator[5] += rxf.z;
+  }
+  #pragma unroll
+  for (int k = 0; k < 6; k++)
+    sdata[k][tid] = accumulator[k];
+  __syncthreads();
+
+  blockReduceSum<6>(sdata, tid);
+
+  if (tid == 0) {
+    blockSums[blockIdx.x].rhoF   = {sdata[0][0], sdata[1][0], sdata[2][0]};  // actually F_net, name is a leftover
+    blockSums[blockIdx.x].rhoRxF = {sdata[3][0], sdata[4][0], sdata[5][0]};  // actually tau_net
+  }
+}
+
+// aT = F_net / M,  alpha = I^-1 * tau_net
+RigidModeMoments computeRigidModeMomentsForce(const Field& f, const RigidBodyGeometry& geom,
+                                              const Magnet* magnet) {
+  int ncells = f.system()->grid().ncells();
+  int numBlocks = numReductionBlocks(ncells);
+  TransRotPartial sums = reduceOnDevice<TransRotPartial>(numBlocks, k_forceMomentPartialSums, f.cu(), geom.com);
+
+  RigidModeMoments moments;
+  moments.T = {sums.rhoF.x / geom.totalRho, sums.rhoF.y / geom.totalRho, sums.rhoF.z / geom.totalRho};
+  double3 tau = sums.rhoRxF;
+  moments.omega.x = geom.Iinv[0][0]*tau.x + geom.Iinv[0][1]*tau.y + geom.Iinv[0][2]*tau.z;
+  moments.omega.y = geom.Iinv[1][0]*tau.x + geom.Iinv[1][1]*tau.y + geom.Iinv[1][2]*tau.z;
+  moments.omega.z = geom.Iinv[2][0]*tau.x + geom.Iinv[2][1]*tau.y + geom.Iinv[2][2]*tau.z;
+  return moments;
+}
+
+// ---- subtraction: correction is rho(r) * (aT + alpha x r), NOT bare affine ----
+
+__global__ void k_subtractRigidForce(CuField f, CuParameter rho, double3 com,
+                                     double3 aT, double3 alpha) {
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (!f.cellInGrid(idx) || !f.cellInGeometry(idx))
+    return;
+
+  double3 r = subD3(cellPositionDeviceD(f.system, idx), com);
+  double3 rigidAccel = {aT.x + (alpha.y*r.z - alpha.z*r.y),
+                        aT.y + (alpha.z*r.x - alpha.x*r.z),
+                        aT.z + (alpha.x*r.y - alpha.y*r.x)};
+  double density = rho.valueAt(idx);
+
+  real3 f_real = f.vectorAt(idx);
+  real3 result = {real(double(f_real.x) - density*rigidAccel.x),
+                  real(double(f_real.y) - density*rigidAccel.y),
+                  real(double(f_real.z) - density*rigidAccel.z)};
+  f.setVectorInCell(idx, result);
+}
+
+void removeRigidBodyModesForce(Field& f, const RigidBodyGeometry& geom, const Magnet* magnet) {
+  RigidModeMoments moments = computeRigidModeMomentsForce(f, geom, magnet);
+  CuParameter rho = magnet->rho.cu();
+  int ncells = f.system()->grid().ncells();
+  cudaLaunch(ncells, k_subtractRigidForce, f.cu(), rho, geom.com, moments.T, moments.omega);
 }

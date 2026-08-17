@@ -82,6 +82,8 @@ add_library(physics STATIC
     rigidbodymodes3.hpp
     rigidbodymodes4.cu
     rigidbodymodes4.hpp
+    rigidbodymodes_diag.cu
+    rigidbodymodes_diag.hpp
     straintensor.cu
     straintensor.hpp
     stresstensor.cu

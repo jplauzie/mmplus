@@ -42,3 +42,8 @@ RigidBodyGeometry computeRigidBodyGeometry(const Magnet* magnet);
 /// that `geom` was computed from.
 void removeRigidBodyModes(Field& f, const RigidBodyGeometry& geom,
                           const Magnet* magnet);
+
+RigidModeMoments computeRigidModeMomentsForce(const Field& f, const RigidBodyGeometry& geom,
+                                               const Magnet* magnet);
+
+void removeRigidBodyModesForce(Field& f, const RigidBodyGeometry& geom, const Magnet* magnet);                

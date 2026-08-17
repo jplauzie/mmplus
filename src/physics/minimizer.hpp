@@ -9,6 +9,7 @@
 #include "rigidbodymodes2.hpp"
 #include "rigidbodymodes3.hpp"
 #include "rigidbodymodes4.hpp"   
+#include "rigidbodymodes_diag.hpp"
 
 class Ferromagnet;
 class HostMagnet;
@@ -86,6 +87,7 @@ class Minimizer {
   std::vector<M_FieldQuantity> forces_;
   std::vector<RigidBodyGeometry> rigidGeoms_;
   std::vector<RigidBodyModes2> rigidModes2_;
+  std::vector<RigidBodyModes2> rigidModes2Force_;
   std::vector<RigidBodyGeometry3> rigidGeoms3_;
   std::vector<RigidBodyGeometry4> rigidGeoms4_;
   std::vector<Field> f0, f1, u0, u1;
