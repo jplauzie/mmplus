@@ -237,10 +237,7 @@ __global__ void k_transRotPartialSumsGeneric(TransRotPartial* blockSums, CuField
 }
 
 // ---- fused elementwise apply: u -= T + theta x r, geometry-masked --------
-// symbols are for displacement, but reused for force, velocity, etc.
-// scaleByRho multiplies the correction by rho(r) before subtracting --
-// needed to reconstruct a force *density* rather than a bare kinematic
-// field; unused (scale=1) for kinematic fields.
+// scaleByRho used for force. F-=rho*(a +α x r)
 
 __global__ void k_subtractRigidModesGeneric(CuField f, CuParameter rho, double3 com,
                                             double3 T, double3 omega, bool scaleByRho) {
