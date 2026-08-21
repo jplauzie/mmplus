@@ -7,7 +7,6 @@
 #include "quantityevaluator.hpp"
 #include "rigidbodymodes.hpp"
 #include "rigidbodymodes4.hpp"   
-#include "rigidbodymodes_diag.hpp"
 
 class Ferromagnet;
 class HostMagnet;

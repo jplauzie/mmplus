@@ -1,3 +1,14 @@
+#pragma once
+
+#include <array>
+
+class Field;
+class Magnet;
+
+struct RigidModeMoments {
+  double3 T;
+  double3 omega;
+};
 struct RigidBodyGeometry {
   double3 com;
   double totalRho;

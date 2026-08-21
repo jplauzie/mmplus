@@ -313,8 +313,15 @@ RigidModeMoments computeRigidModeMoments(const Field& f, const RigidBodyGeometry
   TransRotPartial trp = reduceOnDevice<TransRotPartial>(numBlocks, k_transRotPartialSumsGeneric,
                                                         f.cu(), rho, geom.com, unweighted);
 
-  double denom = unweighted ? double(ncells) : geom.totalRho;
-  const double (&IinvToUse)[3][3] = unweighted ? geom.IinvUnweighted : geom.Iinv;
+  double denom;
+  const double (*IinvToUse)[3];
+  if (unweighted) {
+    denom = double(ncells);
+    IinvToUse = geom.IinvUnweighted;
+  } else {
+    denom = geom.totalRho;
+    IinvToUse = geom.Iinv;
+  }
 
   RigidModeMoments moments;
   moments.T = {trp.rhoF.x / denom, trp.rhoF.y / denom, trp.rhoF.z / denom};
