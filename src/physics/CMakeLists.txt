@@ -74,10 +74,11 @@ add_library(physics STATIC
     poyntingvector.hpp
     relaxer.hpp
     relaxer.cpp
+    rigidbodymodes_common.hpp
     rigidbodymodes.cu
     rigidbodymodes.hpp
-    rigidbodymodes2.cu
-    rigidbodymodes2.hpp
+    rigidbodymodes4.cu
+    rigidbodymodes4.hpp
     straintensor.cu
     straintensor.hpp
     stresstensor.cu

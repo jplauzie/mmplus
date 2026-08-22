@@ -34,11 +34,12 @@ class Altermagnet : public HostMagnet {
  const Ferromagnet* sub1() const;
  const Ferromagnet* sub2() const;
  
- void minimize(real tol = 1e-6, int nSamples = 20,
+void minimize(real tol = 1e-6, int nSamples = 20,
               real tolEl = 1e-6, int nSamplesEl = 10,
-             real stepsizeEl = 1e-14, real stepsizeElFallback = 1e-30,
-             int maxSteps = 200000, int rigidBodyModesInterval = 1, int rigidBodyModesDelay = 0);
- void relax(real tol);
+              real stepsizeEl = 1e-30, real stepsizeElFallback = 1e-30,
+              int maxSteps = 200000, int rigidBodyModesInterval = 1, int rigidBodyModesDelay = 0,
+              int rigidBodyModesMethod = 0);
+void relax(real tol);
 
  // Anisotropic exchange constant
   Parameter alterex_1;

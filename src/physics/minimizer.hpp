@@ -6,7 +6,7 @@
 #include "field.hpp"
 #include "quantityevaluator.hpp"
 #include "rigidbodymodes.hpp"
-#include "rigidbodymodes2.hpp"   
+#include "rigidbodymodes4.hpp"   
 
 class Ferromagnet;
 class HostMagnet;
@@ -14,13 +14,12 @@ class Magnet;
 class MumaxWorld;
 
 /// Minimizer implements a steepest-descent (Barzilai-Borwein) relaxation of the magnetization, following Exl et al., JAP 115,
-/// 17D118 (2014). When elastodynamics is enabled on a magnet, a parallel steepest-descent
-/// relaxation of the elastic displacement towards mechanical equilibrium
-/// (effective body force -> 0).
+/// 17D118 (2014). When elastodynamics is enabled, there is a parallel steepest-descent
+/// relaxation of the elastic displacement towards equilibrium.
+/// 
 ///
 /// Both systems are stepped every iteration inside step(), each with their
-/// own independently-tracked Barzilai-Borwein step size and convergence
-/// history. Overall convergence requires both systems (if present) to have
+/// own BB step and convergence criteria. Overall convergence requires both systems (if present) to have
 /// converged.
 class Minimizer {
  public:
@@ -83,7 +82,7 @@ class Minimizer {
   std::vector<const Magnet*> elMagnets_;
   std::vector<M_FieldQuantity> forces_;
   std::vector<RigidBodyGeometry> rigidGeoms_;
-  std::vector<RigidBodyModes2> rigidModes2_;
+  std::vector<RigidBodyGeometry4> rigidGeoms4_;
   std::vector<Field> f0, f1, u0, u1;
   std::vector<real> elStepsizes_;
   std::deque<real> lastElDiffs_;
@@ -93,18 +92,10 @@ class Minimizer {
   real stepsizeElFallback_; 
 
   bool shouldRemoveRigidBodyModes() const;
-  // NEW: applies whichever method is toggled to f; for the first ~20
-  // steps, also computes and prints BOTH methods' output (T/omega vs.
-  // projection coefficients) to std::cerr regardless of toggle, tagged
-  // with `label`, so the two can be compared side by side. Only the
-  // toggled method ever mutates f. Temporary debug scaffolding -- strip
-  // or gate before merge.
-  void applyRigidBodyModeRemoval(Field& f, size_t i, const char* label);
-
   
   int nsteps_;
   int maxSteps_;                  
   int rigidBodyModesInterval_;    
   int rigidBodyModesDelay_;  
-  int rigidBodyModesMethod_;       
+  int cleanInitialRotationExact_;     
 };

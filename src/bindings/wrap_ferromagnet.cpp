@@ -81,8 +81,8 @@ void wrap_ferromagnet(py::module& m) {
            py::arg("max_steps") = 200000,
            py::arg("rigid_body_modes_interval") = 1,
            py::arg("rigid_body_modes_delay") = 0,
-           py::arg("rigid_body_modes_method") = 0) 
-     .def("relax", &Ferromagnet::relax, py::arg("tol"));
+           py::arg("rigid_body_modes_method") = 0)
+      .def("relax", &Ferromagnet::relax, py::arg("tol"));
 
   m.def("torque", &torqueQuantity);
   m.def("llg_torque", &llgTorqueQuantity);

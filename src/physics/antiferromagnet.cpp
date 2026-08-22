@@ -38,9 +38,10 @@ const Ferromagnet* Antiferromagnet::sub2() const {
 
 void Antiferromagnet::minimize(real tol, int nSamples, real tolEl, int nSamplesEl,
                            real stepsizeEl, real stepsizeElFallback,
-                           int maxSteps, int rigidBodyModesInterval, int rigidBodyModesDelay) {
+                           int maxSteps, int rigidBodyModesInterval, int rigidBodyModesDelay,
+                           int rigidBodyModesMethod) {
   Minimizer minimizer(this, tol, nSamples, tolEl, nSamplesEl, stepsizeEl, stepsizeElFallback,
-                      maxSteps, rigidBodyModesInterval, rigidBodyModesDelay);
+                      maxSteps, rigidBodyModesInterval, rigidBodyModesDelay, rigidBodyModesMethod);
   minimizer.exec();
 }
 

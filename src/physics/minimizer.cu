@@ -14,7 +14,7 @@
 #include "internalbodyforce.hpp"
 #include <cstdint>
 #include <cstring>
-#include <fstream> 
+#include <fstream>
 #include <iomanip>
 #include <array>
 #include <iostream>
@@ -30,15 +30,15 @@ void addElasticIfPresent(const Magnet* magnet,
                          std::vector<const Magnet*>& elMagnets,
                          std::vector<M_FieldQuantity>& forces,
                          std::vector<RigidBodyGeometry>& rigidGeoms,
-                         std::vector<RigidBodyModes2>& rigidModes2) {
+                         std::vector<RigidBodyGeometry4>& rigidGeoms4) {
   if (!elasticityAssuredZero(magnet)) {
     elMagnets.push_back(magnet);
     forces.push_back(effectiveBodyForceQuantity(magnet));
     rigidGeoms.push_back(computeRigidBodyGeometry(magnet));
-    rigidModes2.push_back(computeRigidBodyModes2(magnet));
+    rigidGeoms4.push_back(computeRigidBodyGeometry4(magnet));
   }
 }
-} 
+}
 
 Minimizer::Minimizer(const Ferromagnet* magnet,
                      real stopMaxMagDiff,
@@ -50,7 +50,7 @@ Minimizer::Minimizer(const Ferromagnet* magnet,
                      int maxSteps,
                      int rigidBodyModesInterval,
                      int rigidBodyModesDelay,
-                     int rigidBodyModesMethod)
+                     int cleanInitialRotationExact)
     : magnets_({magnet}),
       torques_({relaxTorqueQuantity(magnet)}),
       nMagDiffSamples_(nMagDiffSamples),
@@ -58,9 +58,9 @@ Minimizer::Minimizer(const Ferromagnet* magnet,
       nElDiffSamples_(nElDiffSamples),
       stopMaxElDiff_(stopMaxElDiff),
       t0(1), t1(1), m0(1), m1(1) {
-  stepsizes_ = {1e-14};  
+  stepsizes_ = {1e-14};
 
-  addElasticIfPresent(magnet, elMagnets_, forces_, rigidGeoms_, rigidModes2_);
+  addElasticIfPresent(magnet, elMagnets_, forces_, rigidGeoms_, rigidGeoms4_);
   f0.resize(elMagnets_.size());
   f1.resize(elMagnets_.size());
   u0.resize(elMagnets_.size());
@@ -68,10 +68,10 @@ Minimizer::Minimizer(const Ferromagnet* magnet,
   elStepsizes_.assign(elMagnets_.size(), stepsizeEl);
   stepsizeElInit_ = stepsizeEl;
   stepsizeElFallback_ = stepsizeElFallback;
-  maxSteps_ = maxSteps;                              
-  rigidBodyModesInterval_ = rigidBodyModesInterval;   
-  rigidBodyModesDelay_ = rigidBodyModesDelay;         
-  rigidBodyModesMethod_ = rigidBodyModesMethod;
+  maxSteps_ = maxSteps;
+  rigidBodyModesInterval_ = rigidBodyModesInterval;
+  rigidBodyModesDelay_ = rigidBodyModesDelay;
+  cleanInitialRotationExact_ = cleanInitialRotationExact;
 }
 
 Minimizer::Minimizer(const HostMagnet* magnet,
@@ -84,7 +84,7 @@ Minimizer::Minimizer(const HostMagnet* magnet,
                      int maxSteps,
                      int rigidBodyModesInterval,
                      int rigidBodyModesDelay,
-                     int rigidBodyModesMethod)
+                     int cleanInitialRotationExact)
     : magnets_(magnet->sublattices()),
       nMagDiffSamples_(nMagDiffSamples),
       stopMaxMagDiff_(stopMaxMagDiff),
@@ -95,12 +95,12 @@ Minimizer::Minimizer(const HostMagnet* magnet,
       m0(magnets_.size()),
       m1(magnets_.size()) {
   stepsizes_.assign(magnets_.size(), 1e-14);
-  
+
   for (auto sub : magnets_)
     torques_.push_back(relaxTorqueQuantity(sub));
 
-  
-  addElasticIfPresent(magnet, elMagnets_, forces_, rigidGeoms_, rigidModes2_);
+
+  addElasticIfPresent(magnet, elMagnets_, forces_, rigidGeoms_, rigidGeoms4_);
   f0.resize(elMagnets_.size());
   f1.resize(elMagnets_.size());
   u0.resize(elMagnets_.size());
@@ -108,10 +108,10 @@ Minimizer::Minimizer(const HostMagnet* magnet,
   elStepsizes_.assign(elMagnets_.size(), stepsizeEl);
   stepsizeElInit_ = stepsizeEl;
   stepsizeElFallback_ = stepsizeElFallback;
-  maxSteps_ = maxSteps;                             
-  rigidBodyModesInterval_ = rigidBodyModesInterval; 
+  maxSteps_ = maxSteps;
+  rigidBodyModesInterval_ = rigidBodyModesInterval;
   rigidBodyModesDelay_ = rigidBodyModesDelay;
-  rigidBodyModesMethod_ = rigidBodyModesMethod;       
+  cleanInitialRotationExact_ = cleanInitialRotationExact;
 }
 
 Minimizer::Minimizer(const MumaxWorld* world,
@@ -124,7 +124,7 @@ Minimizer::Minimizer(const MumaxWorld* world,
                      int maxSteps,
                      int rigidBodyModesInterval,
                      int rigidBodyModesDelay,
-                     int rigidBodyModesMethod)
+                     int cleanInitialRotationExact)
     : nMagDiffSamples_(0),  // set below, once N is known
       stopMaxMagDiff_(stopMaxMagDiff),
       nElDiffSamples_(0),  // set below, once elMagnets_ is known
@@ -149,7 +149,7 @@ Minimizer::Minimizer(const MumaxWorld* world,
     // independent Ferromagnet or per HostMagnet (AFM/NcAfm), never per
     // sublattice, so this check happens once per world->magnets() entry
     // regardless of how many magnetic sublattices it owns.
-        addElasticIfPresent(mag, elMagnets_, forces_, rigidGeoms_, rigidModes2_);
+        addElasticIfPresent(mag, elMagnets_, forces_, rigidGeoms_, rigidGeoms4_);
   }
 
   for (auto magnet : magnets_)
@@ -165,10 +165,10 @@ Minimizer::Minimizer(const MumaxWorld* world,
   elStepsizes_.assign(elMagnets_.size(), stepsizeEl);
   stepsizeElInit_ = stepsizeEl;
   stepsizeElFallback_ = stepsizeElFallback;
-  maxSteps_ = maxSteps;                              
-  rigidBodyModesInterval_ = rigidBodyModesInterval;   
+  maxSteps_ = maxSteps;
+  rigidBodyModesInterval_ = rigidBodyModesInterval;
   rigidBodyModesDelay_ = rigidBodyModesDelay;
-  rigidBodyModesMethod_ = rigidBodyModesMethod;       
+  cleanInitialRotationExact_ = cleanInitialRotationExact;
 }
 
 
@@ -182,6 +182,23 @@ void Minimizer::exec() {
     elMagnets_[i]->elasticVelocity()->set(real3{0, 0, 0});
   }
 
+  
+
+  // Optional one-time exact cleanup of the initial displacement's rigid
+  // rotation. Method 0's per-step removal is a small-rotation
+  // (linearized) approximation; if the hand-off state already carries a
+  // large rotation, that approximation is invalid until it's been
+  // reduced. This uses the exact quaternion alignment to remove it once,
+  // up front, so the linearized method only ever has to track small
+  // residual drift from then on.
+  if (cleanInitialRotationExact_) {
+    for (size_t i = 0; i < elMagnets_.size(); i++) {
+      Field u0init = elMagnets_[i]->elasticDisplacement()->eval();
+      removeRigidBodyModesQuaternion(u0init, rigidGeoms4_[i], elMagnets_[i]);
+      elMagnets_[i]->elasticDisplacement()->set(u0init);
+    }
+  }
+
   bool magnetoelasticsActive = !elMagnets_.empty();
   if (!magnetoelasticsActive) {
     while (!converged())
@@ -189,7 +206,7 @@ void Minimizer::exec() {
     return;
   }
 
-  
+
   while (!converged() && nsteps_ < maxSteps_) {
     step();
   }
@@ -281,26 +298,24 @@ void Minimizer::stepMagnetic() {
 void Minimizer::stepElastic() {
   for (size_t i = 0; i < elMagnets_.size(); i++) {
     u0[i] = elMagnets_[i]->elasticDisplacement()->eval();
-    //if (shouldRemoveRigidBodyModes()) applyRigidBodyModeRemoval(u0[i], i, "u0");
-    
+    //if (shouldRemoveRigidBodyModes()) removeRigidBodyModes(u0[i], rigidGeoms_[i], elMagnets_[i],true);
 
     if (nsteps_ == 0) {
       elMagnets_[i]->elasticDisplacement()->set(u0[i]);
       f0[i] = forces_[i].eval();
-      //if (shouldRemoveRigidBodyModes()) applyRigidBodyModeRemoval(f0[i], i, "f0");
     } else {
       f0[i] = f1[i];
     }
 
+    //if (shouldRemoveRigidBodyModes()) removeRigidBodyModes(f0[i], rigidGeoms_[i], elMagnets_[i],true);
     real h = elStepsizes_[i];
     u1[i] = Field(elMagnets_[i]->system(), 3);
     int ncells = u1[i].grid().ncells();
     cudaLaunch(ncells, k_stepElastic, u1[i].cu(), u0[i].cu(), f0[i].cu(), h);
   }
 
-  //cleaning u1 loses information for delicate symmetric starting states. Also should be redundant since this is all linear, anyway.
   for (size_t i = 0; i < elMagnets_.size(); i++) {
-   if (shouldRemoveRigidBodyModes()) applyRigidBodyModeRemoval(u1[i], i, "u1");
+   if (shouldRemoveRigidBodyModes()) removeRigidBodyModes(u1[i], rigidGeoms_[i], elMagnets_[i],true);
   }
 
   for (size_t i = 0; i < elMagnets_.size(); i++) {
@@ -309,15 +324,15 @@ void Minimizer::stepElastic() {
 
   for (size_t i = 0; i < elMagnets_.size(); i++) {
     f1[i] = forces_[i].eval();
-    if (shouldRemoveRigidBodyModes()) applyRigidBodyModeRemoval(f1[i], i, "f1");
+    if (shouldRemoveRigidBodyModes()) removeRigidBodyModes(f1[i], rigidGeoms_[i], elMagnets_[i],true);
   }
 
   for (size_t i = 0; i < elMagnets_.size(); i++) {
     Field du = add(real(+1), u1[i], real(-1), u0[i]);
-    if (shouldRemoveRigidBodyModes()) applyRigidBodyModeRemoval(du, i, "du");
+    if (shouldRemoveRigidBodyModes()) removeRigidBodyModes(du, rigidGeoms_[i], elMagnets_[i],true);
 
     Field dg = add(real(-1), f1[i], real(+1), f0[i]);
-    if (shouldRemoveRigidBodyModes()) applyRigidBodyModeRemoval(dg, i, "dg");
+    if (shouldRemoveRigidBodyModes()) removeRigidBodyModes(dg, rigidGeoms_[i], elMagnets_[i],true);
 
     real maxDu = maxVecNorm(du);
     real maxDg = maxVecNorm(dg);
@@ -423,38 +438,7 @@ bool Minimizer::shouldRemoveRigidBodyModes() const {
   return nsteps_ % rigidBodyModesInterval_ == 0;
 }
 
-void Minimizer::applyRigidBodyModeRemoval(Field& f, size_t i, const char* label) {
-  constexpr int kDiagSteps = 20;
-  if (nsteps_ < kDiagSteps) {
-    real rawNorm = maxVecNorm(f);   // NEW: magnitude of f BEFORE either method touches it
 
-    RigidModeMoments m0 = computeRigidModeMoments(f, rigidGeoms_[i], elMagnets_[i]);
-    std::array<double, 6> c1raw = rigidBodyModeCoefficients2(f, rigidModes2_[i], elMagnets_[i]);
-    // ... existing rescale + print of m0/c1 ...
-
-    // NEW: apply BOTH methods to independent copies of the *same* raw f,
-    // and directly diff the results -- isolates per-cleaning discrepancy
-    // from any trajectory difference caused by which method is actually driving.
-    Field cleaned0 = f;
-    Field cleaned1 = f;
-    removeRigidBodyModes(cleaned0, rigidGeoms_[i], elMagnets_[i]);
-    removeRigidBodyModes2(cleaned1, rigidModes2_[i], elMagnets_[i]);
-    Field cleanDiff = add(real(1), cleaned0, real(-1), cleaned1);
-    real cleanDiffNorm = maxVecNorm(cleanDiff);
-
-    std::cerr << std::setprecision(8)
-              << "[rbm-diag2] step=" << nsteps_ << " field=" << label << " i=" << i
-              << " raw|f|=" << rawNorm
-              << " |cleaned0-cleaned1|=" << cleanDiffNorm
-              << " ratio=" << (rawNorm > 0 ? cleanDiffNorm / rawNorm : 0)
-              << std::endl;
-  }
-
-  if (rigidBodyModesMethod_ == 0)
-    removeRigidBodyModes(f, rigidGeoms_[i], elMagnets_[i]);
-  else
-    removeRigidBodyModes2(f, rigidModes2_[i], elMagnets_[i]);
-}
 
 void Minimizer::addMagDiff(real dm) {
   lastMagDiffs_.push_back(dm);
