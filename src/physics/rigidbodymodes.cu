@@ -11,6 +11,7 @@
 #include "parameter.hpp"
 #include "reduce.hpp"
 #include "rigidbodymodes.hpp"
+#include "rigidbodymodes_common.hpp"
 #include "system.hpp"
 
 namespace {
@@ -23,45 +24,11 @@ int numReductionBlocks(int ncells) {
   return n;
 }
 
-// Double-precision cell position. cellsize is f32 (CuSystem::cellsize is real3), avoids compounding additional rounding in
-// everything downstream (com subtraction, cross products, sums). maybe unnecessary?
-__device__ inline double3 cellPositionDeviceD(const CuSystem& system, int idx) {
-  int3 coord = system.grid.index2coord(idx);
-  return double3{double(coord.x) * double(system.cellsize.x),
-                 double(coord.y) * double(system.cellsize.y),
-                 double(coord.z) * double(system.cellsize.z)};
-}
-
-__host__ __device__ inline double3 addD3(double3 a, double3 b) {
-  return double3{a.x + b.x, a.y + b.y, a.z + b.z};
-}
-__host__ __device__ inline double3 subD3(double3 a, double3 b) {
-  return double3{a.x - b.x, a.y - b.y, a.z - b.z};
-}
-__host__ __device__ inline double3 crossD3(double3 a, double3 b) {
-  return double3{a.y * b.z - a.z * b.y,
-                 a.z * b.x - a.x * b.z,
-                 a.x * b.y - a.y * b.x};
-}
-
 __host__ __device__ inline double4 operator+(double4 a, double4 b) {
   return {a.x + b.x, a.y + b.y, a.z + b.z, a.w + b.w};
 }
 
-template <int NFIELDS>
-__device__ inline void blockReduceSum(double sdata[NFIELDS][BLOCKDIM], int tid) {
-  for (unsigned int s = BLOCKDIM / 2; s > 0; s >>= 1) {
-    if (tid < s) {
-      #pragma unroll
-      for (int f = 0; f < NFIELDS; f++)
-        sdata[f][tid] += sdata[f][tid + s];
-    }
-    __syncthreads();
-  }
-}
-
-// device-reduce-then-gather-on-host for precision... inefficient
-
+//device-reduce-then-gather-on-host. gather-on-host is inefficient
 template <typename T, typename... Args>
 T reduceOnDevice(int numBlocks, void (*kernel)(T*, Args...), Args... args) {
   GpuBuffer<T> d_partials(numBlocks);
@@ -80,9 +47,10 @@ T reduceOnDevice(int numBlocks, void (*kernel)(T*, Args...), Args... args) {
   return sum;
 }
 
-// pass 1: center of mass (COM), total-mass sum
+// pass 1: center of mass (COM) (if unweighted=true:  w=1 , COM is geometric centroid)
+// factor of V cancels elsewhere, so actually just rho weighted if unweighted=false
 __global__ void k_comPartialSums(double4* blockSums, CuSystem system,
-                                 CuParameter rho) {
+                                 CuParameter rho, bool unweighted) {
   __shared__ double sdata[4][BLOCKDIM];
   int ncells = system.grid.ncells();
   int tid = threadIdx.x;
@@ -93,7 +61,12 @@ __global__ void k_comPartialSums(double4* blockSums, CuSystem system,
   for (int i = gid; i < ncells; i += stride) {
     if (!system.inGeometry(i))
       continue;
-    double w = double(rho.valueAt(i));
+    double w;
+    if (unweighted) {
+      w = 1.0;
+    } else {
+      w = double(rho.valueAt(i));
+    }
     double3 r = cellPositionDeviceD(system, i);
     accumulator[0] += w * r.x;
     accumulator[1] += w * r.y;
@@ -111,20 +84,20 @@ __global__ void k_comPartialSums(double4* blockSums, CuSystem system,
     blockSums[blockIdx.x] = {sdata[0][0], sdata[1][0], sdata[2][0], sdata[3][0]};
 }
 
-struct ComResult { double3 com; double totalRho; };
+struct ComResult { double3 com; double weightSum; };
 
-ComResult computeCom(const CuSystem& cusys, const CuParameter& rho, int ncells) {
+ComResult computeCom(const CuSystem& cusys, const CuParameter& rho, int ncells, bool unweighted) {
   int numBlocks = numReductionBlocks(ncells);
-  double4 s = reduceOnDevice<double4>(numBlocks, k_comPartialSums, cusys, rho);
+  double4 s = reduceOnDevice<double4>(numBlocks, k_comPartialSums, cusys, rho, unweighted);
 
-  if (s.w <= 0.0)
+  if (s.w <= 0.0){
     throw std::runtime_error("computeRigidBodyGeometry: total mass (sum of rho) in geometry is zero or negative.");
+  }
 
   return ComResult{double3{s.x / s.w, s.y / s.w, s.z / s.w}, s.w};
 }
 
-// pass 2: inertia tensor about COM
-
+// pass 2: inertia tensor about a given COM
 struct InertiaPartial { double3 diag; double3 offdiag; };
 __host__ __device__ inline InertiaPartial operator+(InertiaPartial a, InertiaPartial b) {
   return {addD3(a.diag, b.diag), addD3(a.offdiag, b.offdiag)};
@@ -143,7 +116,12 @@ __global__ void k_inertiaPartialSums(InertiaPartial* blockSums,
   for (int i = gid; i < ncells; i += stride) {
     if (!system.inGeometry(i))
       continue;
-    double w = unweighted ? 1.0 : double(rho.valueAt(i));
+    double w;
+    if (unweighted) {
+      w = 1.0;
+    } else {
+      w = double(rho.valueAt(i));
+    }
     double3 r = subD3(cellPositionDeviceD(system, i), com);
     double x = r.x, y = r.y, z = r.z;
     accumulator[0] += w * (y * y + z * z);
@@ -187,9 +165,7 @@ void invert3x3(const double I[3][3], double out[3][3]) {
   out[2][2] = ( I[0][0]*I[1][1] - I[0][1]*I[1][0]) * invDet;
 }
 
-// translation + angular rotation, fused. weight is rho if !unweighted,
-// else 1.0 for every cell -- see rigidbodymodes.hpp.
-
+// fused translation + angular rotation
 struct TransRotPartial { double3 rhoF; double3 rhoRxF; };
 __host__ __device__ inline TransRotPartial operator+(TransRotPartial a, TransRotPartial b) {
   return {addD3(a.rhoF, b.rhoF), addD3(a.rhoRxF, b.rhoRxF)};
@@ -208,12 +184,19 @@ __global__ void k_transRotPartialSumsGeneric(TransRotPartial* blockSums, CuField
   for (int i = gid; i < ncells; i += stride) {
     if (!f.cellInGeometry(i))
       continue;
-    double w = unweighted ? 1.0 : double(rho.valueAt(i));
+    double w;
+    if (unweighted) {
+      w = 1.0;
+    } else {
+      w = double(rho.valueAt(i));
+    }
     real3 f_real = f.vectorAt(i);
     double3 f_double = double3{double(f_real.x), double(f_real.y), double(f_real.z)};
     accumulator[0] += w * f_double.x; accumulator[1] += w * f_double.y; accumulator[2] += w * f_double.z;
 
+    //position relative to COM
     double3 r = subD3(cellPositionDeviceD(f.system, i), com);
+    // angular momentum contribution: r x f
     double3 rxf = crossD3(r, f_double);
     accumulator[3] += w * rxf.x; accumulator[4] += w * rxf.y; accumulator[5] += w * rxf.z;
   }
@@ -230,11 +213,7 @@ __global__ void k_transRotPartialSumsGeneric(TransRotPartial* blockSums, CuField
   }
 }
 
-// ---- fused elementwise apply: u -= T + theta x r, geometry-masked --------
-// Flat subtraction always -- no rho scaling. Rigid-mode drift is a
-// numerical artifact of the elastic solve, not a physical inertial force,
-// so there's no F=ma-style justification for scaling the correction by rho.
-
+// u -= T + theta x r, or f-= f_trans + τ 
 __global__ void k_subtractRigidModesGeneric(CuField f, double3 com,
                                             double3 T, double3 omega) {
   int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -256,25 +235,28 @@ __global__ void k_subtractRigidModesGeneric(CuField f, double3 com,
 }  // namespace
 
 
-// compute center of mass (COM) COM= (Σrho_i*r_i)/Σrho_i (factor of V canceled off) and moment of Inertia tensor (I) about COM
-// I = Σrho_i*(|r_comi|^2*I - r_comi*r_comi^T). r_comi=r_i - COM . (factor of V also cancels off with L in L=I*ω or ω=I^-1*L)
-// L= Σrho_i*(r_comi x f_i) . COM, I computed once and reused.
-// Both the rho-weighted and the unweighted (geometric) inertia tensor are
-// computed here and stored, since removeRigidBodyModes can be called in
-// either mode and needs a matching Iinv for whichever weighting was used
-// in the fit.
+// Computes both the rho-weighted and the fully unweighted (geometric)
+// versions of com, inertia tensor, and normalization
+
+// if rho-weighted, compute center of mass (COM) COM= (Σrho_i*r_i)/Σrho_i (factor of V canceled off) and moment of Inertia tensor (I) 
+//about COM I = Σrho_i*(|r_comi|^2*I - r_comi*r_comi^T). r_comi=r_i - COM . (factor of V also cancels off with L in L=I*ω or ω=I^-1*L)
+// L= Σrho_i*(r_comi x f_i) . COM, I computed once and reused
 RigidBodyGeometry computeRigidBodyGeometry(const Magnet* magnet) {
   std::shared_ptr<const System> system = magnet->system();
   int ncells = system->grid().ncells();
   CuSystem cusys = system->cu();
   CuParameter rho = magnet->rho.cu();
 
-  ComResult COM_result = computeCom(cusys, rho, ncells);
+  ComResult comWeighted = computeCom(cusys, rho, ncells, false);
+  ComResult comUnweighted = computeCom(cusys, rho, ncells, true);
 
   int numBlocks = numReductionBlocks(ncells);
-  InertiaPartial inertiaP = reduceOnDevice<InertiaPartial>(numBlocks, k_inertiaPartialSums, cusys, rho, COM_result.com, /*unweighted=*/false);
-  InertiaPartial inertiaPUnweighted = reduceOnDevice<InertiaPartial>(numBlocks, k_inertiaPartialSums, cusys, rho, COM_result.com, /*unweighted=*/true);
+  InertiaPartial inertiaP = reduceOnDevice<InertiaPartial>(
+      numBlocks, k_inertiaPartialSums, cusys, rho, comWeighted.com, false);
+  InertiaPartial inertiaPUnweighted = reduceOnDevice<InertiaPartial>(
+      numBlocks, k_inertiaPartialSums, cusys, rho, comUnweighted.com, true);
 
+  // I is symmetric, Ixy=Iyx, Ixz=Izx, Iyz=Izy
   double I[3][3] = {{inertiaP.diag.x, inertiaP.offdiag.x, inertiaP.offdiag.y},
                     {inertiaP.offdiag.x, inertiaP.diag.y, inertiaP.offdiag.z},
                     {inertiaP.offdiag.y, inertiaP.offdiag.z, inertiaP.diag.z}};
@@ -282,14 +264,18 @@ RigidBodyGeometry computeRigidBodyGeometry(const Magnet* magnet) {
                      {inertiaPUnweighted.offdiag.x, inertiaPUnweighted.diag.y, inertiaPUnweighted.offdiag.z},
                      {inertiaPUnweighted.offdiag.y, inertiaPUnweighted.offdiag.z, inertiaPUnweighted.diag.z}};
 
+  
   // Tikhonov regularization trick: add a small nonzero term to avoid singularity/instability
   // see Numerical Recipes, 3rd ed, sec 19.5. probably no longer needed with cuboid self-inertia, but leaving just in case
+  //double trace = Ixx + Iyy + Izz;
   //double lambda = 1e-10 * trace;
   //for (int d = 0; d < 3; d++) I[d][d] += lambda;
 
   RigidBodyGeometry geom;
-  geom.com = COM_result.com;
-  geom.totalRho = COM_result.totalRho;
+  geom.com = comWeighted.com;
+  geom.comUnweighted = comUnweighted.com;
+  geom.totalRho = comWeighted.weightSum;
+  geom.ncellsInGeometry = comUnweighted.weightSum;  
   for (int a = 0; a < 3; a++) {
     for (int b = 0; b < 3; b++) {
       geom.I[a][b] = I[a][b];
@@ -301,27 +287,28 @@ RigidBodyGeometry computeRigidBodyGeometry(const Magnet* magnet) {
   return geom;
 }
 
-// unweighted=false: rho-weighted fit -- T = Sum(rho*f)/Sum(rho), L = Sum(rho*r x f), Iinv = geom.Iinv.
-// unweighted=true:  plain unweighted fit -- T = Sum(f)/N, L = Sum(r x f), Iinv = geom.IinvUnweighted.
-// Subtraction (in removeRigidBodyModes) is always flat, regardless of which fit was used.
+// least-squares fit about geom.com
 RigidModeMoments computeRigidModeMoments(const Field& f, const RigidBodyGeometry& geom,
                                          const Magnet* magnet, bool unweighted) {
   CuParameter rho = magnet->rho.cu();
   int ncells = f.system()->grid().ncells();
   int numBlocks = numReductionBlocks(ncells);
 
-  TransRotPartial trp = reduceOnDevice<TransRotPartial>(numBlocks, k_transRotPartialSumsGeneric,
-                                                        f.cu(), rho, geom.com, unweighted);
-
+  double3 com;
   double denom;
   const double (*IinvToUse)[3];
   if (unweighted) {
-    denom = double(ncells);
+    com = geom.comUnweighted;
+    denom = geom.ncellsInGeometry;
     IinvToUse = geom.IinvUnweighted;
   } else {
+    com = geom.com;
     denom = geom.totalRho;
     IinvToUse = geom.Iinv;
   }
+
+  TransRotPartial trp = reduceOnDevice<TransRotPartial>(numBlocks, k_transRotPartialSumsGeneric,
+                                                        f.cu(), rho, com, unweighted);
 
   RigidModeMoments moments;
   moments.T = {trp.rhoF.x / denom, trp.rhoF.y / denom, trp.rhoF.z / denom};
@@ -335,7 +322,13 @@ RigidModeMoments computeRigidModeMoments(const Field& f, const RigidBodyGeometry
 void removeRigidBodyModes(Field& f, const RigidBodyGeometry& geom,
                           const Magnet* magnet, bool unweighted) {
   RigidModeMoments moments = computeRigidModeMoments(f, geom, magnet, unweighted);
+  double3 com;
+  if (unweighted) {
+    com = geom.comUnweighted;
+  } else {
+    com = geom.com;
+  }
   int ncells = f.system()->grid().ncells();
-  cudaLaunch(ncells, k_subtractRigidModesGeneric, f.cu(), geom.com,
-            moments.T, moments.omega);
+  cudaLaunch(ncells, k_subtractRigidModesGeneric, f.cu(), com, moments.T, moments.omega);
 }
+

@@ -298,7 +298,7 @@ void Minimizer::stepMagnetic() {
 void Minimizer::stepElastic() {
   for (size_t i = 0; i < elMagnets_.size(); i++) {
     u0[i] = elMagnets_[i]->elasticDisplacement()->eval();
-    if (shouldRemoveRigidBodyModes()) removeRigidBodyModes(u0[i], rigidGeoms_[i], elMagnets_[i],/*unweighted=*/true);
+    //if (shouldRemoveRigidBodyModes()) removeRigidBodyModes(u0[i], rigidGeoms_[i], elMagnets_[i],true);
 
     if (nsteps_ == 0) {
       elMagnets_[i]->elasticDisplacement()->set(u0[i]);
@@ -307,7 +307,7 @@ void Minimizer::stepElastic() {
       f0[i] = f1[i];
     }
 
-    if (shouldRemoveRigidBodyModes()) removeRigidBodyModes(f0[i], rigidGeoms_[i], elMagnets_[i],/*unweighted=*/true);
+    //if (shouldRemoveRigidBodyModes()) removeRigidBodyModes(f0[i], rigidGeoms_[i], elMagnets_[i],true);
     real h = elStepsizes_[i];
     u1[i] = Field(elMagnets_[i]->system(), 3);
     int ncells = u1[i].grid().ncells();
@@ -315,7 +315,7 @@ void Minimizer::stepElastic() {
   }
 
   for (size_t i = 0; i < elMagnets_.size(); i++) {
-   if (shouldRemoveRigidBodyModes()) removeRigidBodyModes(u1[i], rigidGeoms_[i], elMagnets_[i],/*unweighted=*/true);
+   if (shouldRemoveRigidBodyModes()) removeRigidBodyModes(u1[i], rigidGeoms_[i], elMagnets_[i],true);
   }
 
   for (size_t i = 0; i < elMagnets_.size(); i++) {
@@ -324,15 +324,15 @@ void Minimizer::stepElastic() {
 
   for (size_t i = 0; i < elMagnets_.size(); i++) {
     f1[i] = forces_[i].eval();
-    if (shouldRemoveRigidBodyModes()) removeRigidBodyModes(f1[i], rigidGeoms_[i], elMagnets_[i],/*unweighted=*/true);
+    if (shouldRemoveRigidBodyModes()) removeRigidBodyModes(f1[i], rigidGeoms_[i], elMagnets_[i],true);
   }
 
   for (size_t i = 0; i < elMagnets_.size(); i++) {
     Field du = add(real(+1), u1[i], real(-1), u0[i]);
-    if (shouldRemoveRigidBodyModes()) removeRigidBodyModes(du, rigidGeoms_[i], elMagnets_[i],/*unweighted=*/true);
+    if (shouldRemoveRigidBodyModes()) removeRigidBodyModes(du, rigidGeoms_[i], elMagnets_[i],true);
 
     Field dg = add(real(-1), f1[i], real(+1), f0[i]);
-    if (shouldRemoveRigidBodyModes()) removeRigidBodyModes(dg, rigidGeoms_[i], elMagnets_[i]);
+    if (shouldRemoveRigidBodyModes()) removeRigidBodyModes(dg, rigidGeoms_[i], elMagnets_[i],true);
 
     real maxDu = maxVecNorm(du);
     real maxDg = maxVecNorm(dg);

@@ -29,8 +29,11 @@ class Magnet;
 
 struct RigidBodyGeometry4 {
   double3 com0;      // reference (undeformed) mass-weighted center of mass
+  double3 com0Unweighted;      // geometric centroid reference (no rho)
   double totalRho;   // total mass (sum of rho) in geometry
+  double ncellsInGeometry;
   double S0[3][3];   // Sum w*(r0-com0)(r0-com0)^T -- reference shape covariance
+  double S0Unweighted[3][3];  // unweighted reference shape covariance
 };
 
 struct QuatAlignResult {
@@ -46,12 +49,12 @@ struct QuatAlignResult {
 RigidBodyGeometry4 computeRigidBodyGeometry4(const Magnet* magnet);
 
 QuatAlignResult computeQuaternionAlignment(const Field& u, const RigidBodyGeometry4& geom,
-                                           const Magnet* magnet);
+                                           const Magnet* magnet, bool unweighted = false);
 
 // Subtracts the rigid (translation + finite rotation) component from a
 // displacement field u, in place, using the quaternion alignment.
 void removeRigidBodyModesQuaternion(Field& u, const RigidBodyGeometry4& geom,
-                                    const Magnet* magnet);
+                                    const Magnet* magnet, bool unweighted = false);
 
 // Rotation angle (radians, in [0, pi]): angle = 2*acos(|q0|).
 double quaternionRotationAngle(const QuatAlignResult& result);
