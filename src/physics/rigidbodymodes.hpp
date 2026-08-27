@@ -12,14 +12,14 @@ struct RigidModeMoments {
 };
 
 struct RigidBodyGeometry {
-  double3 com;
-  double3 comUnweighted;    // plain geometric centroid (no rho anywhere)
-  double totalRho;
-  double ncellsInGeometry;  
-  double I[3][3];
-  double Iinv[3][3];
-  double IUnweighted[3][3];
-  double IinvUnweighted[3][3];
+  real3 com;
+  real3 comUnweighted;    // plain geometric centroid (no rho anywhere)
+  real totalRho;
+  real ncellsInGeometry;
+  double I[3][3];              
+  double Iinv[3][3];           
+  double IUnweighted[3][3];    
+  double IinvUnweighted[3][3]; 
 };
 
 RigidBodyGeometry computeRigidBodyGeometry(const Magnet* magnet);
