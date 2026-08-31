@@ -41,9 +41,13 @@ int occupancyMaxBlocks(Kernel kernel, int blockDim, size_t sharedMemBytes = 0) {
 template <typename Kernel>
 int numReductionBlocks(int ncells, Kernel kernel) {
   int n = (ncells + BLOCKDIM - 1) / BLOCKDIM;
-  if (n < 1) n = 1;
+  if (n < 1){
+    n = 1;
+  }
   int maxBlocks = occupancyMaxBlocks(kernel, BLOCKDIM);
-  if (maxBlocks > 0 && n > maxBlocks) n = maxBlocks;
+  if (maxBlocks > 0 && n > maxBlocks){ 
+    n = maxBlocks;
+  }
   return n;
 }
 
@@ -57,14 +61,13 @@ T reduceOnDevice(int ncells, void (*kernel)(T*, Args...), Args... args) {
   checkCudaError(cudaPeekAtLastError());
 
   std::vector<T> partials(numBlocks);
-  checkCudaError(cudaMemcpyAsync(partials.data(), d_partials.get(),
-                                 numBlocks * sizeof(T),
-                                 cudaMemcpyDeviceToHost, getCudaStream()));
+  checkCudaError(cudaMemcpyAsync(partials.data(), d_partials.get(),numBlocks * sizeof(T), cudaMemcpyDeviceToHost, getCudaStream()));
   checkCudaError(cudaStreamSynchronize(getCudaStream()));
 
   T sum{};
-  for (const T& p : partials)
+  for (const T& p : partials){
     sum = sum + p;
+  }
   return sum;
 }
 
@@ -103,8 +106,9 @@ __global__ void k_comPartialSums(ComPartial* blockSums, CuSystem system,
 
   blockReduceSum<4>(sdata, tid);
 
-  if (tid == 0)
+  if (tid == 0){
     blockSums[blockIdx.x] = {real3{sdata[0][0], sdata[1][0], sdata[2][0]}, sdata[3][0]};
+  }
 }
 
 struct ComResult { real3 com; real weightSum; };
@@ -112,8 +116,9 @@ struct ComResult { real3 com; real weightSum; };
 ComResult computeCom(const CuSystem& cusys, const CuParameter& rho, int ncells, bool unweighted) {
   ComPartial s = reduceOnDevice<ComPartial>(ncells, k_comPartialSums, cusys, rho, unweighted);
 
-  if (s.w <= real(0.0))
+  if (s.w <= real(0.0)){
     throw std::runtime_error("computeRigidBodyGeometry: total mass (sum of rho) in geometry is zero or negative.");
+  }
 
   return ComResult{s.rw / s.w, s.w};
 }
@@ -155,8 +160,9 @@ __global__ void k_inertiaPartialSums(InertiaPartial* blockSums,
     accumulator[5] += w * (-y * z);
   }
   #pragma unroll
-  for (int f = 0; f < 6; f++)
+  for (int f = 0; f < 6; f++){
     sdata[f][tid] = accumulator[f];
+  }
   __syncthreads();
 
   blockReduceSum<6>(sdata, tid);
@@ -173,8 +179,9 @@ void invert3x3(const double I[3][3], double out[3][3]) {
       I[0][1]*(I[1][0]*I[2][2] - I[1][2]*I[2][0]) +
       I[0][2]*(I[1][0]*I[2][1] - I[1][1]*I[2][0]);
 
-  if (det == 0.0)
+  if (det == 0.0){
     throw std::runtime_error("Rigid-body inertia tensor is singular.");
+  }
 
   double invDet = 1.0 / det;
   out[0][0] = ( I[1][1]*I[2][2] - I[1][2]*I[2][1]) * invDet;
@@ -209,8 +216,15 @@ __global__ void k_transRotSumsPartial(TransRotAccum* blockPartials, CuField f,
   real accumulator_lx = 0, accumulator_ly = 0, accumulator_lz = 0;
 
   for (int i = gid; i < ncells; i += stride) {
-    if (!f.cellInGeometry(i)) continue;
-    real w = unweighted ? real(1.0) : rho.valueAt(i);
+    if (!f.cellInGeometry(i)){
+       continue;
+    }
+    real w;
+    if (unweighted) {
+        w = real(1.0);
+    } else {
+        w = rho.valueAt(i);
+    }
     real3 fv = f.vectorAt(i);
     accumulator_fx += w * fv.x; accumulator_fy += w * fv.y; accumulator_fz += w * fv.z;
 
@@ -251,8 +265,9 @@ __global__ void k_transRotSumsPartial(TransRotAccum* blockPartials, CuField f,
     vFx = warpReduceSum<real, NUM_WARPS>(vFx); vFy = warpReduceSum<real, NUM_WARPS>(vFy); vFz = warpReduceSum<real, NUM_WARPS>(vFz);
     vLx = warpReduceSum<real, NUM_WARPS>(vLx); vLy = warpReduceSum<real, NUM_WARPS>(vLy); vLz = warpReduceSum<real, NUM_WARPS>(vLz);
 
-    if (lane == 0)
+    if (lane == 0){
       blockPartials[blockIdx.x] = TransRotAccum{vFx, vFy, vFz, vLx, vLy, vLz};
+    }
   }
 }
 
@@ -298,41 +313,59 @@ __global__ void k_transRotSumsCombineDouble(TransRotAccumD* out,
     vFx = warpReduceSum<double, NUM_WARPS>(vFx); vFy = warpReduceSum<double, NUM_WARPS>(vFy); vFz = warpReduceSum<double, NUM_WARPS>(vFz);
     vLx = warpReduceSum<double, NUM_WARPS>(vLx); vLy = warpReduceSum<double, NUM_WARPS>(vLy); vLz = warpReduceSum<double, NUM_WARPS>(vLz);
 
-    if (lane == 0)
+    if (lane == 0){
       *out = TransRotAccumD{vFx, vFy, vFz, vLx, vLy, vLz};
+    }
   }
 }
 
 // Host launcher
+const TransRotAccumD* reduceTransRotSumsDevice(CuField f, CuParameter rho, real3 com,
+                                               bool unweighted, int ncells) {
+  int numBlocksA = numReductionBlocks(ncells, k_transRotSumsPartial);
+  static GpuBuffer<TransRotAccum> d_partials;
+  static GpuBuffer<TransRotAccumD> d_accum(1);
+  d_partials.allocate(numBlocksA);
+
+  k_transRotSumsPartial<<<numBlocksA, BLOCKDIM, 0, getCudaStream()>>>(d_partials.get(), f, rho, com, unweighted);
+  checkCudaError(cudaPeekAtLastError());
+
+  k_transRotSumsCombineDouble<<<1, BLOCKDIM, 0, getCudaStream()>>>(d_accum.get(), d_partials.get(), numBlocksA);
+  checkCudaError(cudaPeekAtLastError());
+
+  return d_accum.get();
+}
+
 TransRotAccumD reduceTransRotSums(CuField f, CuParameter rho, real3 com,
                                   bool unweighted, int ncells) {
-  int numBlocksA = numReductionBlocks(ncells, k_transRotSumsPartial);
-
-  GpuBuffer<TransRotAccum> d_partials(numBlocksA);
-  GpuBuffer<TransRotAccumD> d_out(1);
-
-
-  k_transRotSumsPartial<<<numBlocksA, BLOCKDIM, 0, getCudaStream()>>>(
-      d_partials.get(), f, rho, com, unweighted);
-  checkCudaError(cudaPeekAtLastError());
-
-  k_transRotSumsCombineDouble<<<1, BLOCKDIM, 0, getCudaStream()>>>(
-      d_out.get(), d_partials.get(), numBlocksA);
-  checkCudaError(cudaPeekAtLastError());
-
+  const TransRotAccumD* d_accum = reduceTransRotSumsDevice(f, rho, com, unweighted, ncells);
   TransRotAccumD result;
-  checkCudaError(cudaMemcpyAsync(&result, d_out.get(), sizeof(TransRotAccumD),
+  checkCudaError(cudaMemcpyAsync(&result, d_accum, sizeof(TransRotAccumD),
                                  cudaMemcpyDeviceToHost, getCudaStream()));
   checkCudaError(cudaStreamSynchronize(getCudaStream()));
   return result;
 }
 
+
+struct Mat3x3 { double m[3][3]; };
 // u -= T + theta x r, or f -= f_trans + tau. 
 __global__ void k_subtractRigidModesGeneric(CuField f, real3 com,
-                                            real3 T, real3 omega) {
+                                            const TransRotAccumD* accum,
+                                            double denom, Mat3x3 Iinv) {
+  __shared__ real3 T, omega;
+
+  if (threadIdx.x == 0) {
+    TransRotAccumD a = *accum;
+    T = {real(a.fx / denom), real(a.fy / denom), real(a.fz / denom)};
+    omega = {
+        real(Iinv.m[0][0]*a.lx + Iinv.m[0][1]*a.ly + Iinv.m[0][2]*a.lz),
+        real(Iinv.m[1][0]*a.lx + Iinv.m[1][1]*a.ly + Iinv.m[1][2]*a.lz),
+        real(Iinv.m[2][0]*a.lx + Iinv.m[2][1]*a.ly + Iinv.m[2][2]*a.lz)};
+  }
+  __syncthreads();
+
   int idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (!f.cellInGrid(idx) || !f.cellInGeometry(idx))
-    return;
+  if (!f.cellInGrid(idx) || !f.cellInGeometry(idx)) return;
 
   real3 r = cellPositionDevice(f.system, idx) - com;
   real3 correction = {T.x + (omega.y * r.z - omega.z * r.y),
@@ -341,6 +374,16 @@ __global__ void k_subtractRigidModesGeneric(CuField f, real3 com,
 
   real3 f_real = f.vectorAt(idx);
   f.setVectorInCell(idx, f_real - correction);
+}
+
+struct RigidBodySelection { real3 com; double denom; const double (*Iinv)[3]; };
+
+RigidBodySelection selectGeometry(const RigidBodyGeometry& geom, bool unweighted) {
+  if (unweighted) {
+    return {geom.comUnweighted, double(geom.ncellsInGeometry), geom.IinvUnweighted};
+  } else {
+    return {geom.com, double(geom.totalRho), geom.Iinv};
+  }
 }
 
 }  // namespace
@@ -401,11 +444,12 @@ RigidBodyGeometry computeRigidBodyGeometry(const Magnet* magnet) {
   geom.comUnweighted = comUnweighted.com;
   geom.totalRho = comWeighted.weightSum;
   geom.ncellsInGeometry = comUnweighted.weightSum;
-  for (int a = 0; a < 3; a++)
+  for (int a = 0; a < 3; a++){
     for (int b = 0; b < 3; b++) {
       geom.I[a][b] = I[a][b];
       geom.IUnweighted[a][b] = Iu[a][b];
     }
+  }
   invert3x3(I, geom.Iinv);
   invert3x3(Iu, geom.IinvUnweighted);
   return geom;
@@ -417,26 +461,31 @@ RigidModeMoments computeRigidModeMoments(const Field& f, const RigidBodyGeometry
   CuParameter rho = magnet->rho.cu();
   int ncells = f.system()->grid().ncells();
 
-  real3 com = unweighted ? geom.comUnweighted : geom.com;
-  double denom = unweighted ? double(geom.ncellsInGeometry) : double(geom.totalRho);
-  const double (*IinvToUse)[3] = unweighted ? geom.IinvUnweighted : geom.Iinv;
-
-  TransRotAccumD trp = reduceTransRotSums(f.cu(), rho, com, unweighted, ncells);
+  RigidBodySelection sel = selectGeometry(geom, unweighted);
+  TransRotAccumD trp = reduceTransRotSums(f.cu(), rho, sel.com, unweighted, ncells);
 
   RigidModeMoments moments;
-  moments.T = {trp.fx / denom, trp.fy / denom, trp.fz / denom};
-  moments.omega.x = IinvToUse[0][0]*trp.lx + IinvToUse[0][1]*trp.ly + IinvToUse[0][2]*trp.lz;
-  moments.omega.y = IinvToUse[1][0]*trp.lx + IinvToUse[1][1]*trp.ly + IinvToUse[1][2]*trp.lz;
-  moments.omega.z = IinvToUse[2][0]*trp.lx + IinvToUse[2][1]*trp.ly + IinvToUse[2][2]*trp.lz;
+  moments.T = {trp.fx / sel.denom, trp.fy / sel.denom, trp.fz / sel.denom};
+  moments.omega.x = sel.Iinv[0][0]*trp.lx + sel.Iinv[0][1]*trp.ly + sel.Iinv[0][2]*trp.lz;
+  moments.omega.y = sel.Iinv[1][0]*trp.lx + sel.Iinv[1][1]*trp.ly + sel.Iinv[1][2]*trp.lz;
+  moments.omega.z = sel.Iinv[2][0]*trp.lx + sel.Iinv[2][1]*trp.ly + sel.Iinv[2][2]*trp.lz;
   return moments;
 }
 
 void removeRigidBodyModes(Field& f, const RigidBodyGeometry& geom,
                           const Magnet* magnet, bool unweighted) {
-  RigidModeMoments moments = computeRigidModeMoments(f, geom, magnet, unweighted);
-  real3 com = unweighted ? geom.comUnweighted : geom.com;
-
+  CuParameter rho = magnet->rho.cu();
   int ncells = f.system()->grid().ncells();
-  cudaLaunch(ncells, k_subtractRigidModesGeneric, f.cu(), com,
-             toReal3(moments.T), toReal3(moments.omega));
+
+  RigidBodySelection sel = selectGeometry(geom, unweighted);
+  const TransRotAccumD* d_accum = reduceTransRotSumsDevice(f.cu(), rho, sel.com, unweighted, ncells);
+
+  Mat3x3 IinvArg;
+  for (int a = 0; a < 3; a++) {
+    for (int b = 0; b < 3; b++) {
+      IinvArg.m[a][b] = sel.Iinv[a][b];
+    }
+  }
+
+  cudaLaunch(ncells, k_subtractRigidModesGeneric, f.cu(), sel.com, d_accum, sel.denom, IinvArg);
 }

@@ -54,11 +54,6 @@ __device__ inline void blockReduceSum(T sdata[NFIELDS][BLOCKDIM], int tid) {
 }
 
 // Warp-shuffle, no risk of divergence
-// Reduces the low WIDTH lanes of a warp in log2(WIDTH) shuffle steps.
-// WIDTH defaults to a full warp (32); pass a smaller power of two to combine
-// only that many values (e.g. NUM_WARPS per-warp partials) without wasted
-// steps over zero-padded lanes.
-
 //warps are 32 threads on all current CUDA GPUs
 constexpr int warp_size = 32;
 template <typename T, int WIDTH = 32>
