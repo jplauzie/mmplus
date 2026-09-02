@@ -1,6 +1,4 @@
-#include <numeric>
 #include <stdexcept>
-#include <vector>
 
 #include "cudaerror.hpp"
 #include "cudalaunch.hpp"
@@ -29,9 +27,7 @@ int occupancyMaxBlocks(Kernel kernel, int blockDim, size_t sharedMemBytes = 0) {
     checkCudaError(cudaDeviceGetAttribute(&smCount, cudaDevAttrMultiProcessorCount, device));
 
     int maxActiveBlocksPerSm = 0;
-    checkCudaError(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
-        &maxActiveBlocksPerSm, kernel, blockDim, sharedMemBytes));
-
+    checkCudaError(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&maxActiveBlocksPerSm, kernel, blockDim, sharedMemBytes));
     cached = smCount * maxActiveBlocksPerSm * REDUCTION_OCCUPANCY_MULTIPLIER;
   }
   return cached;
@@ -51,126 +47,203 @@ int numReductionBlocks(int ncells, Kernel kernel) {
   return n;
 }
 
-// device-reduce-then-gather-on-host. Used by the COM/inertia passes. host gather is inefficient, but only runs once
-template <typename T, typename... Args>
-T reduceOnDevice(int ncells, void (*kernel)(T*, Args...), Args... args) {
-  int numBlocks = numReductionBlocks(ncells, kernel);
+// single block 2-level reduction, 8 warps reduce once, then warp0 reduces again
+template <typename T, int N_accums>
+__device__ __forceinline__ void blockReduceSum(T (&accumulators)[N_accums]) {
+  #pragma unroll
+  for (int accumIdx = 0; accumIdx < N_accums; accumIdx++)
+    accumulators[accumIdx] = warpReduceSum<T, warp_size>(accumulators[accumIdx]);
 
-  GpuBuffer<T> d_partials(numBlocks);
-  kernel<<<numBlocks, BLOCKDIM, 0, getCudaStream()>>>(d_partials.get(), args...);
-  checkCudaError(cudaPeekAtLastError());
+  static_assert(BLOCKDIM % warp_size == 0, "assumes full warps");
+  constexpr int NUM_WARPS = BLOCKDIM / warp_size;
+  __shared__ T sdata[N_accums][NUM_WARPS];
 
-  std::vector<T> partials(numBlocks);
-  checkCudaError(cudaMemcpyAsync(partials.data(), d_partials.get(),numBlocks * sizeof(T), cudaMemcpyDeviceToHost, getCudaStream()));
-  checkCudaError(cudaStreamSynchronize(getCudaStream()));
-
-  T sum{};
-  for (const T& p : partials){
-    sum = sum + p;
+  int lane = threadIdx.x % warpSize;
+  int warpId = threadIdx.x / warpSize;
+  if (lane == 0) {
+    #pragma unroll
+    for (int f = 0; f < N_accums; f++)
+      sdata[f][warpId] = accumulators[f];
   }
-  return sum;
+  __syncthreads();
+
+  if (warpId == 0) {
+    #pragma unroll
+    for (int f = 0; f < N_accums; f++) {
+      T v = (lane < NUM_WARPS) ? sdata[f][lane] : T(0);
+      accumulators[f] = warpReduceSum<T, NUM_WARPS>(v);
+    }
+  }
 }
 
 //pass 1: center of mass (COM)
-struct ComPartial { real3 rw; real w; };
-__host__ __device__ inline ComPartial operator+(ComPartial a, ComPartial b) {
-  return {a.rw + b.rw, a.w + b.w};
-}
+// level 1: grid-stride load + two-level warp-shuffle tree reduce, one partial per block.
+// level 2: single block combines the level-1 partials in double, same warp-shuffle tree.
 
-__global__ void k_comPartialSums(ComPartial* blockSums, CuSystem system,
+struct ComAccum { real wrx, wry, wrz, w; };
+struct ComAccumD { double wrx_d, wry_d, wrz_d, w_d; };
+
+// level 1
+__global__ void k_comSumsPartial(ComAccum* blockPartials, CuSystem system,
                                  CuParameter rho, bool unweighted) {
-  __shared__ real sdata[4][BLOCKDIM];
   int ncells = system.grid.ncells();
-  int tid = threadIdx.x;
   int gid = blockIdx.x * blockDim.x + threadIdx.x;
   int stride = blockDim.x * gridDim.x;
 
-  real3 accumulator_pos{0, 0, 0};
-  real accumulator_w = 0;
+  real accum4[4] = {0, 0, 0, 0};  // w*r.x, w*r.y, w*r.z, w
+
   for (int i = gid; i < ncells; i += stride) {
     if (!system.inGeometry(i)){
       continue;
     }
     real w;
     if (unweighted) {
-      w = 1.0;
+      w = real(1.0);
     } else {
       w = rho.valueAt(i);
     }
-    accumulator_pos = accumulator_pos + w * cellPositionDevice(system, i);
-    accumulator_w += w;
+    real3 r = cellPositionDevice(system, i);
+    accum4[0] += w * r.x; accum4[1] += w * r.y; accum4[2] += w * r.z;
+    accum4[3] += w;
   }
-  sdata[0][tid] = accumulator_pos.x; sdata[1][tid] = accumulator_pos.y;
-  sdata[2][tid] = accumulator_pos.z; sdata[3][tid] = accumulator_w;
-  __syncthreads();
 
-  blockReduceSum<4>(sdata, tid);
+  blockReduceSum<real, 4>(accum4);
 
-  if (tid == 0){
-    blockSums[blockIdx.x] = {real3{sdata[0][0], sdata[1][0], sdata[2][0]}, sdata[3][0]};
+  if (threadIdx.x == 0){
+    blockPartials[blockIdx.x] = ComAccum{accum4[0], accum4[1], accum4[2], accum4[3]};
   }
+}
+
+// level 2: single block, double accumulation
+__global__ void k_comSumsCombineDouble(ComAccumD* out, const ComAccum* blockPartials,
+                                       int numPartials) {
+  double accum4_out[4] = {0, 0, 0, 0};
+
+  for (int i = threadIdx.x; i < numPartials; i += blockDim.x) {
+    ComAccum p = blockPartials[i];
+    accum4_out[0] += p.wrx; accum4_out[1] += p.wry; accum4_out[2] += p.wrz; accum4_out[3] += p.w;
+  }
+
+  blockReduceSum<double, 4>(accum4_out);
+
+  if (threadIdx.x == 0){
+    *out = ComAccumD{accum4_out[0], accum4_out[1], accum4_out[2], accum4_out[3]};
+  }
+}
+
+// Host launcher
+ComAccumD computeComSums(const CuSystem& cusys, const CuParameter& rho, int ncells, bool unweighted) {
+  int numBlocks = numReductionBlocks(ncells, k_comSumsPartial);
+
+  GpuBuffer<ComAccum> d_partials(numBlocks);
+  GpuBuffer<ComAccumD> d_accum(1);
+
+  k_comSumsPartial<<<numBlocks, BLOCKDIM, 0, getCudaStream()>>>(d_partials.get(), cusys, rho, unweighted);
+  checkCudaError(cudaPeekAtLastError());
+
+  k_comSumsCombineDouble<<<1, BLOCKDIM, 0, getCudaStream()>>>(d_accum.get(), d_partials.get(), numBlocks);
+  checkCudaError(cudaPeekAtLastError());
+
+  ComAccumD result;
+  checkCudaError(cudaMemcpyAsync(&result, d_accum.get(), sizeof(ComAccumD),cudaMemcpyDeviceToHost, getCudaStream()));
+  checkCudaError(cudaStreamSynchronize(getCudaStream()));
+  return result;
 }
 
 struct ComResult { real3 com; real weightSum; };
 
 ComResult computeCom(const CuSystem& cusys, const CuParameter& rho, int ncells, bool unweighted) {
-  ComPartial s = reduceOnDevice<ComPartial>(ncells, k_comPartialSums, cusys, rho, unweighted);
+  ComAccumD com_sums = computeComSums(cusys, rho, ncells, unweighted);
 
-  if (s.w <= real(0.0)){
+  //actually summed rho
+  real weight = real(com_sums.w_d);
+  if (weight <= real(0.0)){
     throw std::runtime_error("computeRigidBodyGeometry: total mass (sum of rho) in geometry is zero or negative.");
   }
 
-  return ComResult{s.rw / s.w, s.w};
+  return ComResult{real3{real(com_sums.wrx_d), real(com_sums.wry_d), real(com_sums.wrz_d)} / weight, weight};
 }
 
 
 // pass 2: inertia tensor about a given COM
-struct InertiaPartial { real3 diag; real3 offdiag; };
-__host__ __device__ inline InertiaPartial operator+(InertiaPartial a, InertiaPartial b) {
-  return {a.diag + b.diag, a.offdiag + b.offdiag};
-}
+// same two-stage warp-shuffle -> double-combine shape as pass 1.
 
-__global__ void k_inertiaPartialSums(InertiaPartial* blockSums,
+struct InertiaAccum { real xx, yy, zz, xy, xz, yz; };
+struct InertiaAccumD { double xx, yy, zz, xy, xz, yz; };
+
+// level 1
+__global__ void k_inertiaSumsPartial(InertiaAccum* blockPartials,
                                      CuSystem system, CuParameter rho,
                                      real3 com, bool unweighted) {
-  __shared__ real sdata[6][BLOCKDIM];  // xx yy zz xy xz yz
   int ncells = system.grid.ncells();
-  int tid = threadIdx.x;
   int gid = blockIdx.x * blockDim.x + threadIdx.x;
   int stride = blockDim.x * gridDim.x;
 
-  real accumulator[6] = {0, 0, 0, 0, 0, 0};
+  real accum6[6] = {0, 0, 0, 0, 0, 0};  // xx, yy, zz, xy, xz, yz
+
   for (int i = gid; i < ncells; i += stride) {
     if (!system.inGeometry(i)){
       continue;
     }
     real w;
     if (unweighted) {
-      w = 1.0;
+      w = real(1.0);
     } else {
       w = rho.valueAt(i);
     }
     real3 r = cellPositionDevice(system, i) - com;
-    real x = r.x, y = r.y, z = r.z;
-    accumulator[0] += w * (y * y + z * z);
-    accumulator[1] += w * (x * x + z * z);
-    accumulator[2] += w * (x * x + y * y);
-    accumulator[3] += w * (-x * y);
-    accumulator[4] += w * (-x * z);
-    accumulator[5] += w * (-y * z);
+    accum6[0] += w * (r.y * r.y + r.z * r.z);
+    accum6[1] += w * (r.x * r.x + r.z * r.z);
+    accum6[2] += w * (r.x * r.x + r.y * r.y);
+    accum6[3] += w * (-r.x * r.y);
+    accum6[4] += w * (-r.x * r.z);
+    accum6[5] += w * (-r.y * r.z);
   }
-  #pragma unroll
-  for (int f = 0; f < 6; f++){
-    sdata[f][tid] = accumulator[f];
-  }
-  __syncthreads();
 
-  blockReduceSum<6>(sdata, tid);
+  blockReduceSum<real, 6>(accum6);
 
-  if (tid == 0) {
-    blockSums[blockIdx.x].diag = {sdata[0][0], sdata[1][0], sdata[2][0]};
-    blockSums[blockIdx.x].offdiag = {sdata[3][0], sdata[4][0], sdata[5][0]};
+  if (threadIdx.x == 0){
+    blockPartials[blockIdx.x] = InertiaAccum{accum6[0], accum6[1], accum6[2], accum6[3], accum6[4], accum6[5]};
   }
+}
+
+// level 2: single block, double accumulation
+__global__ void k_inertiaSumsCombineDouble(InertiaAccumD* out,
+                                           const InertiaAccum* blockPartials,
+                                           int numPartials) {
+  double accum6_out[6] = {0, 0, 0, 0, 0, 0};
+
+  for (int i = threadIdx.x; i < numPartials; i += blockDim.x) {
+    InertiaAccum p = blockPartials[i];
+    accum6_out[0] += p.xx; accum6_out[1] += p.yy; accum6_out[2] += p.zz;
+    accum6_out[3] += p.xy; accum6_out[4] += p.xz; accum6_out[5] += p.yz;
+  }
+
+  blockReduceSum<double, 6>(accum6_out);
+
+  if (threadIdx.x == 0){
+    *out = InertiaAccumD{accum6_out[0], accum6_out[1], accum6_out[2], accum6_out[3], accum6_out[4], accum6_out[5]};
+  }
+}
+
+// Host launcher
+InertiaAccumD computeInertiaSums(const CuSystem& cusys, const CuParameter& rho, real3 com,
+                                 int ncells, bool unweighted) {
+  int numBlocks = numReductionBlocks(ncells, k_inertiaSumsPartial);
+
+  GpuBuffer<InertiaAccum> d_partials(numBlocks);
+  GpuBuffer<InertiaAccumD> d_accum(1);
+
+  k_inertiaSumsPartial<<<numBlocks, BLOCKDIM, 0, getCudaStream()>>>(d_partials.get(), cusys, rho, com, unweighted);
+  checkCudaError(cudaPeekAtLastError());
+
+  k_inertiaSumsCombineDouble<<<1, BLOCKDIM, 0, getCudaStream()>>>(d_accum.get(), d_partials.get(), numBlocks);
+  checkCudaError(cudaPeekAtLastError());
+
+  InertiaAccumD result;
+  checkCudaError(cudaMemcpyAsync(&result, d_accum.get(), sizeof(InertiaAccumD),cudaMemcpyDeviceToHost, getCudaStream()));
+  checkCudaError(cudaStreamSynchronize(getCudaStream()));
+  return result;
 }
 
 void invert3x3(const double I[3][3], double out[3][3]) {
@@ -196,14 +269,14 @@ void invert3x3(const double I[3][3], double out[3][3]) {
 }
 
 
-// fused translation/rotation moment reduction, 2 stage reduction
+// fused translation/rotation moment reduction, 2 stage reduction again
 // level 1: grid-stride load + two-level warp-shuffle tree reduce.
 //  Each block writes its own partial to a small global array. 
 // level 2: exactly one block. Combines level-1 partials using f64,
 //  then the same warp-shuffle tree.
 
-struct TransRotAccum { real fx, fy, fz, lx, ly, lz; };
-struct TransRotAccumD { double fx, fy, fz, lx, ly, lz; };
+struct TransRotAccum { real moment0_x, moment0_y, moment0_z, moment1_x, moment1_y, moment1_z; };
+struct TransRotAccumD { double moment0_x_d, moment0_y_d, moment0_z_d, moment1_x_d, moment1_y_d, moment1_z_d; };
 
 // level 1
 __global__ void k_transRotSumsPartial(TransRotAccum* blockPartials, CuField f,
@@ -212,8 +285,7 @@ __global__ void k_transRotSumsPartial(TransRotAccum* blockPartials, CuField f,
   int gid = blockIdx.x * blockDim.x + threadIdx.x;
   int stride = blockDim.x * gridDim.x;
 
-  real accumulator_fx = 0, accumulator_fy = 0, accumulator_fz = 0;
-  real accumulator_lx = 0, accumulator_ly = 0, accumulator_lz = 0;
+  real accum6[6] = {0, 0, 0, 0, 0, 0};  // moment0_x, moment0_y, moment0_z, moment1_x, moment1_y, moment1_z
 
   for (int i = gid; i < ncells; i += stride) {
     if (!f.cellInGeometry(i)){
@@ -225,49 +297,18 @@ __global__ void k_transRotSumsPartial(TransRotAccum* blockPartials, CuField f,
     } else {
         w = rho.valueAt(i);
     }
-    real3 fv = f.vectorAt(i);
-    accumulator_fx += w * fv.x; accumulator_fy += w * fv.y; accumulator_fz += w * fv.z;
+    real3 fvec = f.vectorAt(i);
+    accum6[0] += w * fvec.x; accum6[1] += w * fvec.y; accum6[2] += w * fvec.z;
 
     real3 r = cellPositionDevice(f.system, i) - com;
-    real3 rxf = cross(r, fv);
-    accumulator_lx += w * rxf.x; accumulator_ly += w * rxf.y; accumulator_lz += w * rxf.z;
+    real3 rxf = cross(r, fvec);
+    accum6[3] += w * rxf.x; accum6[4] += w * rxf.y; accum6[5] += w * rxf.z;
   }
 
+  blockReduceSum<real, 6>(accum6);
 
-  accumulator_fx = warpReduceSum<real, warp_size>(accumulator_fx);
-  accumulator_fy = warpReduceSum<real, warp_size>(accumulator_fy);
-  accumulator_fz = warpReduceSum<real, warp_size>(accumulator_fz);
-  accumulator_lx = warpReduceSum<real, warp_size>(accumulator_lx);
-  accumulator_ly = warpReduceSum<real, warp_size>(accumulator_ly);
-  accumulator_lz = warpReduceSum<real, warp_size>(accumulator_lz);
-
-  static_assert(BLOCKDIM % warp_size == 0, "assumes full warps");
-  constexpr int NUM_WARPS = BLOCKDIM / warp_size;
-  __shared__ real sFx[NUM_WARPS], sFy[NUM_WARPS], sFz[NUM_WARPS];
-  __shared__ real sLx[NUM_WARPS], sLy[NUM_WARPS], sLz[NUM_WARPS];
-
-  int lane = threadIdx.x % warpSize;
-  int warpId = threadIdx.x / warpSize;
-  if (lane == 0) {
-    sFx[warpId] = accumulator_fx; sFy[warpId] = accumulator_fy; sFz[warpId] = accumulator_fz;
-    sLx[warpId] = accumulator_lx; sLy[warpId] = accumulator_ly; sLz[warpId] = accumulator_lz;
-  }
-  __syncthreads();
-
-  if (warpId == 0) {
-    real vFx = (lane < NUM_WARPS) ? sFx[lane] : real(0);
-    real vFy = (lane < NUM_WARPS) ? sFy[lane] : real(0);
-    real vFz = (lane < NUM_WARPS) ? sFz[lane] : real(0);
-    real vLx = (lane < NUM_WARPS) ? sLx[lane] : real(0);
-    real vLy = (lane < NUM_WARPS) ? sLy[lane] : real(0);
-    real vLz = (lane < NUM_WARPS) ? sLz[lane] : real(0);
-
-    vFx = warpReduceSum<real, NUM_WARPS>(vFx); vFy = warpReduceSum<real, NUM_WARPS>(vFy); vFz = warpReduceSum<real, NUM_WARPS>(vFz);
-    vLx = warpReduceSum<real, NUM_WARPS>(vLx); vLy = warpReduceSum<real, NUM_WARPS>(vLy); vLz = warpReduceSum<real, NUM_WARPS>(vLz);
-
-    if (lane == 0){
-      blockPartials[blockIdx.x] = TransRotAccum{vFx, vFy, vFz, vLx, vLy, vLz};
-    }
+  if (threadIdx.x == 0){
+    blockPartials[blockIdx.x] = TransRotAccum{accum6[0], accum6[1], accum6[2], accum6[3], accum6[4], accum6[5]};
   }
 }
 
@@ -275,47 +316,18 @@ __global__ void k_transRotSumsPartial(TransRotAccum* blockPartials, CuField f,
 __global__ void k_transRotSumsCombineDouble(TransRotAccumD* out,
                                             const TransRotAccum* blockPartials,
                                             int numPartials) {
-  int tid = threadIdx.x;
+  double accum6_out[6] = {0, 0, 0, 0, 0, 0};
 
-  double accFx = 0, accFy = 0, accFz = 0;
-  double accLx = 0, accLy = 0, accLz = 0;
-
-  for (int i = tid; i < numPartials; i += blockDim.x) {
-    TransRotAccum p = blockPartials[i];
-    accFx += double(p.fx); accFy += double(p.fy); accFz += double(p.fz);
-    accLx += double(p.lx); accLy += double(p.ly); accLz += double(p.lz);
+  for (int i = threadIdx.x; i < numPartials; i += blockDim.x) {
+    TransRotAccum partials = blockPartials[i];
+    accum6_out[0] += partials.moment0_x; accum6_out[1] += partials.moment0_y; accum6_out[2] += partials.moment0_z;
+    accum6_out[3] += partials.moment1_x; accum6_out[4] += partials.moment1_y; accum6_out[5] += partials.moment1_z;
   }
 
-  accFx = warpReduceSum<double, warp_size>(accFx); accFy = warpReduceSum<double, warp_size>(accFy); accFz = warpReduceSum<double, warp_size>(accFz);
-  accLx = warpReduceSum<double, warp_size>(accLx); accLy = warpReduceSum<double, warp_size>(accLy); accLz = warpReduceSum<double, warp_size>(accLz);
+  blockReduceSum<double, 6>(accum6_out);
 
-  static_assert(BLOCKDIM % warp_size == 0, "assumes full warps");
-  constexpr int NUM_WARPS = BLOCKDIM / warp_size;
-  __shared__ double sFx[NUM_WARPS], sFy[NUM_WARPS], sFz[NUM_WARPS];
-  __shared__ double sLx[NUM_WARPS], sLy[NUM_WARPS], sLz[NUM_WARPS];
-
-  int lane = tid % warpSize;
-  int warpId = tid / warpSize;
-  if (lane == 0) {
-    sFx[warpId] = accFx; sFy[warpId] = accFy; sFz[warpId] = accFz;
-    sLx[warpId] = accLx; sLy[warpId] = accLy; sLz[warpId] = accLz;
-  }
-  __syncthreads();
-
-  if (warpId == 0) {
-    double vFx = (lane < NUM_WARPS) ? sFx[lane] : 0.0;
-    double vFy = (lane < NUM_WARPS) ? sFy[lane] : 0.0;
-    double vFz = (lane < NUM_WARPS) ? sFz[lane] : 0.0;
-    double vLx = (lane < NUM_WARPS) ? sLx[lane] : 0.0;
-    double vLy = (lane < NUM_WARPS) ? sLy[lane] : 0.0;
-    double vLz = (lane < NUM_WARPS) ? sLz[lane] : 0.0;
-
-    vFx = warpReduceSum<double, NUM_WARPS>(vFx); vFy = warpReduceSum<double, NUM_WARPS>(vFy); vFz = warpReduceSum<double, NUM_WARPS>(vFz);
-    vLx = warpReduceSum<double, NUM_WARPS>(vLx); vLy = warpReduceSum<double, NUM_WARPS>(vLy); vLz = warpReduceSum<double, NUM_WARPS>(vLz);
-
-    if (lane == 0){
-      *out = TransRotAccumD{vFx, vFy, vFz, vLx, vLy, vLz};
-    }
+  if (threadIdx.x == 0){
+    *out = TransRotAccumD{accum6_out[0], accum6_out[1], accum6_out[2], accum6_out[3], accum6_out[4], accum6_out[5]};
   }
 }
 
@@ -336,31 +348,20 @@ const TransRotAccumD* reduceTransRotSumsDevice(CuField f, CuParameter rho, real3
   return d_accum.get();
 }
 
-TransRotAccumD reduceTransRotSums(CuField f, CuParameter rho, real3 com,
-                                  bool unweighted, int ncells) {
-  const TransRotAccumD* d_accum = reduceTransRotSumsDevice(f, rho, com, unweighted, ncells);
-  TransRotAccumD result;
-  checkCudaError(cudaMemcpyAsync(&result, d_accum, sizeof(TransRotAccumD),
-                                 cudaMemcpyDeviceToHost, getCudaStream()));
-  checkCudaError(cudaStreamSynchronize(getCudaStream()));
-  return result;
-}
-
-
 struct Mat3x3 { double m[3][3]; };
 // u -= T + theta x r, or f -= f_trans + tau. 
 __global__ void k_subtractRigidModesGeneric(CuField f, real3 com,
                                             const TransRotAccumD* accum,
                                             double denom, Mat3x3 Iinv) {
-  __shared__ real3 T, omega;
+  __shared__ real3 T, theta;
 
   if (threadIdx.x == 0) {
     TransRotAccumD a = *accum;
-    T = {real(a.fx / denom), real(a.fy / denom), real(a.fz / denom)};
-    omega = {
-        real(Iinv.m[0][0]*a.lx + Iinv.m[0][1]*a.ly + Iinv.m[0][2]*a.lz),
-        real(Iinv.m[1][0]*a.lx + Iinv.m[1][1]*a.ly + Iinv.m[1][2]*a.lz),
-        real(Iinv.m[2][0]*a.lx + Iinv.m[2][1]*a.ly + Iinv.m[2][2]*a.lz)};
+    T = {real(a.moment0_x_d / denom), real(a.moment0_y_d / denom), real(a.moment0_z_d / denom)};
+    theta = {
+        real(Iinv.m[0][0]*a.moment1_x_d + Iinv.m[0][1]*a.moment1_y_d + Iinv.m[0][2]*a.moment1_z_d),
+        real(Iinv.m[1][0]*a.moment1_x_d + Iinv.m[1][1]*a.moment1_y_d + Iinv.m[1][2]*a.moment1_z_d),
+        real(Iinv.m[2][0]*a.moment1_x_d + Iinv.m[2][1]*a.moment1_y_d + Iinv.m[2][2]*a.moment1_z_d)};
   }
   __syncthreads();
 
@@ -368,30 +369,20 @@ __global__ void k_subtractRigidModesGeneric(CuField f, real3 com,
   if (!f.cellInGrid(idx) || !f.cellInGeometry(idx)) return;
 
   real3 r = cellPositionDevice(f.system, idx) - com;
-  real3 correction = {T.x + (omega.y * r.z - omega.z * r.y),
-                      T.y + (omega.z * r.x - omega.x * r.z),
-                      T.z + (omega.x * r.y - omega.y * r.x)};
+  real3 correction = {T.x + (theta.y * r.z - theta.z * r.y),
+                      T.y + (theta.z * r.x - theta.x * r.z),
+                      T.z + (theta.x * r.y - theta.y * r.x)};
 
-  real3 f_real = f.vectorAt(idx);
-  f.setVectorInCell(idx, f_real - correction);
+  real3 fvec = f.vectorAt(idx);
+  f.setVectorInCell(idx, fvec - correction);
 }
 
-struct RigidBodySelection { real3 com; double denom; const double (*Iinv)[3]; };
-
-RigidBodySelection selectGeometry(const RigidBodyGeometry& geom, bool unweighted) {
-  if (unweighted) {
-    return {geom.comUnweighted, double(geom.ncellsInGeometry), geom.IinvUnweighted};
-  } else {
-    return {geom.com, double(geom.totalRho), geom.Iinv};
-  }
-}
-
-}  // namespace
+}  // namespace ends
 
 // Computes both the rho-weighted and the fully unweighted (geometric)
 // versions of com, inertia tensor, and normalization.
 //
-// if rho-weighted, compute center of mass (COM) COM= (Σrho_i*r_i)/Σrho_i (factor of V canceled off) and moment of Inertia tensor (I)
+// if rho-weighted, compute center of mass (COM) COM= (Σrho_i*r_i)/Σrho_i (factor of V cancels off) and moment of Inertia tensor (I)
 // about COM I = Σrho_i*(|r_comi|^2*I - r_comi*r_comi^T). r_comi=r_i - COM . (factor of V also cancels off with L in L=I*ω or ω=I^-1*L)
 // L= Σrho_i*(r_comi x f_i) . COM, I computed once and reused
 RigidBodyGeometry computeRigidBodyGeometry(const Magnet* magnet) {
@@ -403,18 +394,16 @@ RigidBodyGeometry computeRigidBodyGeometry(const Magnet* magnet) {
   ComResult comWeighted = computeCom(cusys, rho, ncells, false);
   ComResult comUnweighted = computeCom(cusys, rho, ncells, true);
 
-  InertiaPartial inertiaP = reduceOnDevice<InertiaPartial>(
-      ncells, k_inertiaPartialSums, cusys, rho, comWeighted.com, false);
-  InertiaPartial inertiaPUnweighted = reduceOnDevice<InertiaPartial>(
-      ncells, k_inertiaPartialSums, cusys, rho, comUnweighted.com, true);
+  InertiaAccumD inertiaP = computeInertiaSums(cusys, rho, comWeighted.com, ncells, false);
+  InertiaAccumD inertiaPUnweighted = computeInertiaSums(cusys, rho, comUnweighted.com, ncells, true);
 
  // I is symmetric, Ixy=Iyx, Ixz=Izx, Iyz=Izy, f64 in case of conditioning for flat/thin geometries
-  double I[3][3] = {{double(inertiaP.diag.x), double(inertiaP.offdiag.x), double(inertiaP.offdiag.y)},
-                    {double(inertiaP.offdiag.x), double(inertiaP.diag.y), double(inertiaP.offdiag.z)},
-                    {double(inertiaP.offdiag.y), double(inertiaP.offdiag.z), double(inertiaP.diag.z)}};
-  double Iu[3][3] = {{double(inertiaPUnweighted.diag.x), double(inertiaPUnweighted.offdiag.x), double(inertiaPUnweighted.offdiag.y)},
-                     {double(inertiaPUnweighted.offdiag.x), double(inertiaPUnweighted.diag.y), double(inertiaPUnweighted.offdiag.z)},
-                     {double(inertiaPUnweighted.offdiag.y), double(inertiaPUnweighted.offdiag.z), double(inertiaPUnweighted.diag.z)}};
+  double I[3][3] = {{inertiaP.xx, inertiaP.xy, inertiaP.xz},
+                    {inertiaP.xy, inertiaP.yy, inertiaP.yz},
+                    {inertiaP.xz, inertiaP.yz, inertiaP.zz}};
+  double Iu[3][3] = {{inertiaPUnweighted.xx, inertiaPUnweighted.xy, inertiaPUnweighted.xz},
+                     {inertiaPUnweighted.xy, inertiaPUnweighted.yy, inertiaPUnweighted.yz},
+                     {inertiaPUnweighted.xz, inertiaPUnweighted.yz, inertiaPUnweighted.zz}};
 
 
   //account for the self-inertia of cuboids, not point masses
@@ -455,37 +444,33 @@ RigidBodyGeometry computeRigidBodyGeometry(const Magnet* magnet) {
   return geom;
 }
 
-// least-squares fit about geom.com
-RigidModeMoments computeRigidModeMoments(const Field& f, const RigidBodyGeometry& geom,
-                                         const Magnet* magnet, bool unweighted) {
-  CuParameter rho = magnet->rho.cu();
-  int ncells = f.system()->grid().ncells();
-
-  RigidBodySelection sel = selectGeometry(geom, unweighted);
-  TransRotAccumD trp = reduceTransRotSums(f.cu(), rho, sel.com, unweighted, ncells);
-
-  RigidModeMoments moments;
-  moments.T = {trp.fx / sel.denom, trp.fy / sel.denom, trp.fz / sel.denom};
-  moments.omega.x = sel.Iinv[0][0]*trp.lx + sel.Iinv[0][1]*trp.ly + sel.Iinv[0][2]*trp.lz;
-  moments.omega.y = sel.Iinv[1][0]*trp.lx + sel.Iinv[1][1]*trp.ly + sel.Iinv[1][2]*trp.lz;
-  moments.omega.z = sel.Iinv[2][0]*trp.lx + sel.Iinv[2][1]*trp.ly + sel.Iinv[2][2]*trp.lz;
-  return moments;
-}
-
 void removeRigidBodyModes(Field& f, const RigidBodyGeometry& geom,
                           const Magnet* magnet, bool unweighted) {
   CuParameter rho = magnet->rho.cu();
   int ncells = f.system()->grid().ncells();
 
-  RigidBodySelection sel = selectGeometry(geom, unweighted);
-  const TransRotAccumD* d_accum = reduceTransRotSumsDevice(f.cu(), rho, sel.com, unweighted, ncells);
+  real3 com;
+  double denom;
+  const double (*Iinv)[3];
+
+  if (unweighted) {
+      com = geom.comUnweighted;
+      denom = double(geom.ncellsInGeometry);
+      Iinv = geom.IinvUnweighted;
+  } else {
+      com = geom.com;
+      denom = double(geom.totalRho);
+      Iinv = geom.Iinv;
+  }
+
+  const TransRotAccumD* d_accum = reduceTransRotSumsDevice(f.cu(), rho, com, unweighted, ncells);
 
   Mat3x3 IinvArg;
-  for (int a = 0; a < 3; a++) {
-    for (int b = 0; b < 3; b++) {
-      IinvArg.m[a][b] = sel.Iinv[a][b];
+  for (int a = 0; a < 3; a++){
+    for (int b = 0; b < 3; b++){
+      IinvArg.m[a][b] = Iinv[a][b];
     }
   }
 
-  cudaLaunch(ncells, k_subtractRigidModesGeneric, f.cu(), sel.com, d_accum, sel.denom, IinvArg);
+  cudaLaunch(ncells, k_subtractRigidModesGeneric, f.cu(), com, d_accum, denom, IinvArg);
 }

@@ -24,8 +24,5 @@ struct RigidBodyGeometry {
 
 RigidBodyGeometry computeRigidBodyGeometry(const Magnet* magnet);
 
-RigidModeMoments computeRigidModeMoments(const Field& f, const RigidBodyGeometry& geom,
-                                         const Magnet* magnet, bool unweighted = false);
-
 void removeRigidBodyModes(Field& f, const RigidBodyGeometry& geom,
                           const Magnet* magnet, bool unweighted = false);

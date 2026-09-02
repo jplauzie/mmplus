@@ -41,12 +41,12 @@ __host__ __device__ inline double3 toDouble3(real3 v) {
 
 
 // T is deduced from the sdata array's element type
-template <int NFIELDS, typename T>
-__device__ inline void blockReduceSum(T sdata[NFIELDS][BLOCKDIM], int tid) {
+template <int N_accums, typename T>
+__device__ inline void blockReduceSum(T sdata[N_accums][BLOCKDIM], int tid) {
   for (unsigned int s = BLOCKDIM / 2; s > 0; s >>= 1) {
     if (tid < s) {
       #pragma unroll
-      for (int f = 0; f < NFIELDS; f++)
+      for (int f = 0; f < N_accums; f++)
         sdata[f][tid] += sdata[f][tid + s];
     }
     __syncthreads();
