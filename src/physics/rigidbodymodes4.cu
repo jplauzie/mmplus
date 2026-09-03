@@ -11,6 +11,7 @@
 #include "parameter.hpp"
 #include "rigidbodymodes4.hpp"
 #include "rigidbodymodes_common.hpp"
+#include "rigidbodymodes_common.cuh"
 #include "system.hpp"
 
 namespace {
