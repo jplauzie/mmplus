@@ -76,6 +76,14 @@ __device__ __forceinline__ void blockReduceSum(T (&accumulators)[N_accums]) {
   }
 }
 
+template <typename T>
+__device__ __forceinline__ void kahanAdd(T& sum, T& c, T x) {
+  T y = x - c;
+  T t = sum + y;
+  c = (t - sum) - y;
+  sum = t;
+}
+
 //pass 1: center of mass (COM)
 // level 1: grid-stride load + two-level warp-shuffle tree reduce, one partial per block.
 // level 2: single block combines the level-1 partials in double, same warp-shuffle tree.
@@ -91,6 +99,7 @@ __global__ void k_comSumsPartial(ComAccum* blockPartials, CuSystem system,
   int stride = blockDim.x * gridDim.x;
 
   real accum4[4] = {0, 0, 0, 0};  // w*r.x, w*r.y, w*r.z, w
+  real comp4[4] = {0, 0, 0, 0};   // Kahan compensation terms
 
   for (int i = gid; i < ncells; i += stride) {
     if (!system.inGeometry(i)){
@@ -103,8 +112,10 @@ __global__ void k_comSumsPartial(ComAccum* blockPartials, CuSystem system,
       w = rho.valueAt(i);
     }
     real3 r = cellPositionDevice(system, i);
-    accum4[0] += w * r.x; accum4[1] += w * r.y; accum4[2] += w * r.z;
-    accum4[3] += w;
+    kahanAdd(accum4[0], comp4[0], w * r.x);
+    kahanAdd(accum4[1], comp4[1], w * r.y);
+    kahanAdd(accum4[2], comp4[2], w * r.z);
+    kahanAdd(accum4[3], comp4[3], w);
   }
 
   blockReduceSum<real, 4>(accum4);
@@ -180,6 +191,7 @@ __global__ void k_inertiaSumsPartial(InertiaAccum* blockPartials,
   int stride = blockDim.x * gridDim.x;
 
   real accum6[6] = {0, 0, 0, 0, 0, 0};  // xx, yy, zz, xy, xz, yz
+  real comp6[6] = {0, 0, 0, 0, 0, 0};   // Kahan compensation terms
 
   for (int i = gid; i < ncells; i += stride) {
     if (!system.inGeometry(i)){
@@ -192,12 +204,12 @@ __global__ void k_inertiaSumsPartial(InertiaAccum* blockPartials,
       w = rho.valueAt(i);
     }
     real3 r = cellPositionDevice(system, i) - com;
-    accum6[0] += w * (r.y * r.y + r.z * r.z);
-    accum6[1] += w * (r.x * r.x + r.z * r.z);
-    accum6[2] += w * (r.x * r.x + r.y * r.y);
-    accum6[3] += w * (-r.x * r.y);
-    accum6[4] += w * (-r.x * r.z);
-    accum6[5] += w * (-r.y * r.z);
+    kahanAdd(accum6[0], comp6[0], w * (r.y * r.y + r.z * r.z));
+    kahanAdd(accum6[1], comp6[1], w * (r.x * r.x + r.z * r.z));
+    kahanAdd(accum6[2], comp6[2], w * (r.x * r.x + r.y * r.y));
+    kahanAdd(accum6[3], comp6[3], w * (-r.x * r.y));
+    kahanAdd(accum6[4], comp6[4], w * (-r.x * r.z));
+    kahanAdd(accum6[5], comp6[5], w * (-r.y * r.z));
   }
 
   blockReduceSum<real, 6>(accum6);
@@ -286,6 +298,7 @@ __global__ void k_transRotSumsPartial(TransRotAccum* blockPartials, CuField f,
   int stride = blockDim.x * gridDim.x;
 
   real accum6[6] = {0, 0, 0, 0, 0, 0};  // moment0_x, moment0_y, moment0_z, moment1_x, moment1_y, moment1_z
+  real comp6[6] = {0, 0, 0, 0, 0, 0};   // Kahan compensation terms
 
   for (int i = gid; i < ncells; i += stride) {
     if (!f.cellInGeometry(i)){
@@ -298,11 +311,15 @@ __global__ void k_transRotSumsPartial(TransRotAccum* blockPartials, CuField f,
         w = rho.valueAt(i);
     }
     real3 fvec = f.vectorAt(i);
-    accum6[0] += w * fvec.x; accum6[1] += w * fvec.y; accum6[2] += w * fvec.z;
+    kahanAdd(accum6[0], comp6[0], w * fvec.x);
+    kahanAdd(accum6[1], comp6[1], w * fvec.y);
+    kahanAdd(accum6[2], comp6[2], w * fvec.z);
 
     real3 r = cellPositionDevice(f.system, i) - com;
     real3 rxf = cross(r, fvec);
-    accum6[3] += w * rxf.x; accum6[4] += w * rxf.y; accum6[5] += w * rxf.z;
+    kahanAdd(accum6[3], comp6[3], w * rxf.x);
+    kahanAdd(accum6[4], comp6[4], w * rxf.y);
+    kahanAdd(accum6[5], comp6[5], w * rxf.z);
   }
 
   blockReduceSum<real, 6>(accum6);
