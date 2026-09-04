@@ -367,7 +367,7 @@ const TransRotAccumD* reduceTransRotSumsDevice(CuField f, CuParameter rho, real3
 }
 
 struct Mat3x3 { double m[3][3]; };
-// u -= T + theta x r, or f -= f_trans + tau. 
+// u -= T + theta x r, or f -= f_trans + tau. least-squares fit
 __global__ void k_subtractRigidModesGeneric(CuField f, real3 com,
                                             const TransRotAccumD* accum,
                                             double denom, Mat3x3 Iinv) {
