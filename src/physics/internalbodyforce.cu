@@ -7,22 +7,57 @@
 #include "stresstensor.hpp"
 #include "traction.hpp"
 
+#define TEST_IDX_LX    0     // pick a cell on the -x boundary of geometry
+#define TEST_IDX_RX    0     // pick a cell on the +x boundary of geometry
+#define TEST_IDX_LX_Y  0     // second cell on -x boundary, same y
+#define TEST_IDX_RX_Y  0     // second cell on +x boundary, same y
+
 
 __device__ int tensorComp(int row, int col) {
-  return (row == col) ? row : row+col+2;
+  return (row == col) ? row : row + col + 2;
 }
 
 __device__ int3 tensorRowComps(int row) {
   return int3{tensorComp(row, 0), tensorComp(row, 1), tensorComp(row, 2)};
 }
 
-/**
- * Numerical divergence of stress with central five-point stencil in bulk material.
- * Lower order accuracy (three-point stencil) central difference is used in bulk
- * 1 cell away from boundary.
- * The traction is applied at the boundary, implemented using a custom
- * second-order-accurate three-point stencil.
-*/
+
+// ---------------------------------------------------------------------------
+// Helpers (identical to those in straintensor.cu; move to a shared header
+// eventually). No wrapping here — this is what makes the boundary detection
+// work for box-filling geometries.
+// ---------------------------------------------------------------------------
+// Bounds check against the system's own grid (NOT the mastergrid,
+// which may have z-size 0 for 2D worlds).
+__device__ __forceinline__ bool insideGrid(const Grid& g, int3 c) {
+  const int3 s = g.size();
+  const int3 o = g.origin();
+  // If the mastergrid has zero extent in any dimension, treat that
+  // dimension as unbounded (use c's value).
+  const int sx = (s.x > 0) ? s.x : 1;
+  const int sy = (s.y > 0) ? s.y : 1;
+  const int sz = (s.z > 0) ? s.z : 1;
+  return c.x >= o.x && c.x < o.x + sx &&
+         c.y >= o.y && c.y < o.y + sy &&
+         c.z >= o.z && c.z < o.z + sz;
+}
+
+// Bounds check against the system's own grid, NOT the mastergrid.
+// The mastergrid can have size 1 or 0 in some dimensions (e.g. a 2D world),
+// which would reject every legitimate neighbour coordinate.
+__device__ __forceinline__ bool inGridAndGeom(const Grid& sysGrid,
+                                              const CuSystem& sys,
+                                              int3 c) {
+  const int3 s = sysGrid.size();
+  const int3 o = sysGrid.origin();
+  if (c.x < o.x || c.x >= o.x + s.x) return false;
+  if (c.y < o.y || c.y >= o.y + s.y) return false;
+  if (c.z < o.z || c.z >= o.z + s.z) return false;
+  return sys.inGeometry(c);
+}
+
+
+
 __global__ void k_internalBodyForce(CuField fField,
                                     const CuField stressTensor,
                                     const CuBoundaryTraction traction,
@@ -32,7 +67,7 @@ __global__ void k_internalBodyForce(CuField fField,
   const CuSystem system = fField.system;
   const Grid grid = system.grid;
 
-  // When outside the geometry, set to zero and return early
+  // Outside the geometry: zero and return.
   if (!system.inGeometry(idx)) {
     if (grid.cellInGrid(idx)) {
       fField.setVectorInCell(idx, real3{0, 0, 0});
@@ -40,67 +75,77 @@ __global__ void k_internalBodyForce(CuField fField,
     return;
   }
 
-  // array instead of real3 to get indexing [i]
-  const real ws[3] = {w.x, w.y, w.z};
-  const int3 im2_arr[3] = {int3{-2, 0, 0}, int3{0,-2, 0}, int3{0, 0,-2}};
-  const int3 im1_arr[3] = {int3{-1, 0, 0}, int3{0,-1, 0}, int3{0, 0,-1}};
-  const int3 ip1_arr[3] = {int3{ 1, 0, 0}, int3{0, 1, 0}, int3{0, 0, 1}};
-  const int3 ip2_arr[3] = {int3{ 2, 0, 0}, int3{0, 2, 0}, int3{0, 0, 2}};
-  const int3 coo = grid.index2coord(idx);
-    
-  real3 f = {0, 0, 0};  // elastic force vector
+  const real ws[3]   = {w.x, w.y, w.z};
+  const int3 dirs[3] = {int3{1,0,0}, int3{0,1,0}, int3{0,0,1}};
+  const int3 coo     = grid.index2coord(idx);
+
+  real3 f = {0, 0, 0};
+
+  // SAT penalty. Σ = 2 is H^{-1} for the 2-1-2 SBP norm (boundary weight h/2),
+  // and gives exact energy conservation with a free surface. Try Σ = 1 or 3
+  // if the BC looks too soft / too stiff.
+  const real Sigma = 2.0;
+
+#pragma unroll
   for (int i = 0; i < 3; i++) {
-    // i is {x, y, z} derivative direction and stress tensor row
-    // f_j = ∂i σ_ij
+    const int3 di        = dirs[i];
+    const real wi        = ws[i];
+    const int3 stressRow = tensorRowComps(i);
+    const int3 cm1       = coo - di;
+    const int3 cp1       = coo + di;
 
-    int3 stressRow = tensorRowComps(i);
+    const bool m1_ok = inGridAndGeom(grid, system, cm1);
+    const bool p1_ok = inGridAndGeom(grid, system, cp1);
 
-    // translate in direction i
-    int3 im2 = im2_arr[i], im1 = im1_arr[i];  // transl in direction -i
-    int3 ip1 = ip1_arr[i], ip2 = ip2_arr[i];  // transl in direction +i
+    // --- Divergence: SBP 2-1-2, plain (no H^-1 here). ---
+    if (m1_ok && p1_ok) {
+        f += 0.5 * wi * (stressTensor.vectorAt(cp1, stressRow)
+                      - stressTensor.vectorAt(cm1, stressRow));
+    } else if (p1_ok) {
+        f += wi * (-stressTensor.vectorAt(idx, stressRow)
+                  + stressTensor.vectorAt(cp1, stressRow));
+    } else if (m1_ok) {
+        f += wi * (-stressTensor.vectorAt(cm1, stressRow)
+                  + stressTensor.vectorAt(idx, stressRow));
+    }
+    // else: single-cell interval in this direction — no divergence here.
 
-    int3 coo_im2 = mastergrid.wrap(coo + im2);
-    int3 coo_im1 = mastergrid.wrap(coo + im1);
-    int3 coo_ip1 = mastergrid.wrap(coo + ip1);
-    int3 coo_ip2 = mastergrid.wrap(coo + ip2);
+    const real SatSign = +1.0;
+    const real Sigma   = 2.0;
 
-    bool im2_inGeo = system.inGeometry(coo_im2);
-    bool im1_inGeo = system.inGeometry(coo_im1);
-    bool ip1_inGeo = system.inGeometry(coo_ip1);
-    bool ip2_inGeo = system.inGeometry(coo_ip2);
+    if (!m1_ok) {
+        const real3 sigma_n = -1.0 * stressTensor.vectorAt(idx, stressRow);
+        const real3 tau     =        traction.getSide(i, -1).vectorAt(idx);
+        const real3 SAT     = SatSign * wi * Sigma * (tau - sigma_n);
+        f += SAT;
 
-    if (!im1_inGeo && !ip1_inGeo) {
-      // --1-- central difference of boundary stress, ε ~ h^2
-      f += ws[i] * (traction.getSide(i, 1).vectorAt(idx)
-                    // -1 from stencil * -1 from normal vector
-                    + traction.getSide(i, -1).vectorAt(idx));
-    } else if (!im1_inGeo) {
-      // --11- left boundary, custom difference + traction BC,  ε ~ h^2
-      f += ws[i] * (
-        // stress row at coo_i-1/2 = boundary traction * negative sense of normal vector
-        // -1 from stencil * -1 from normal vector
-        4./3. * traction.getSide(i, -1).vectorAt(idx)
-        + stressTensor.vectorAt(idx, stressRow)  // +3/3 weight
-        + 1./3. * stressTensor.vectorAt(coo_ip1, stressRow)
-      );
-    } else if (!ip1_inGeo) {
-      // -11-- right boundary, custom difference + traction BC,  ε ~ h^2
-      f += ws[i] * (
-        - 1./3. * stressTensor.vectorAt(coo_im1, stressRow)
-        - stressTensor.vectorAt(idx, stressRow)  // -3/3 weight
-        // stress row at coo_i+1/2 = boundary traction * positive sense of normal vector
-        + 4./3. * traction.getSide(i, 1).vectorAt(idx)
-      );
-    } else if (!im2_inGeo || !ip2_inGeo) {
-      // -111-, 1111-, -1111 central difference,  ε ~ h^2
-      f += 0.5*ws[i] * (stressTensor.vectorAt(coo_ip1, stressRow) -
-                        stressTensor.vectorAt(coo_im1, stressRow));
-    } else {  // all 5 points are safe for sure
-      // 11111 central difference,  ε ~ h^4
-      f += ws[i] * ((4./6.) * (stressTensor.vectorAt(coo_ip1, stressRow) -
-                               stressTensor.vectorAt(coo_im1, stressRow)) + 
-                    (1./12.)* (stressTensor.vectorAt(coo_im2, stressRow) -
-                               stressTensor.vectorAt(coo_ip2, stressRow)));
+        if (idx == TEST_IDX_LX || idx == TEST_IDX_LX_Y) {
+            printf("MINUS face i=%d idx=%d coo=(%d,%d,%d) "
+                  "sigma_row=(%+.4e,%+.4e,%+.4e) tau=(%+.4e,%+.4e,%+.4e) SAT=(%+.4e,%+.4e,%+.4e)\n",
+                  i, idx, coo.x, coo.y, coo.z,
+                  stressTensor.vectorAt(idx, stressRow).x,
+                  stressTensor.vectorAt(idx, stressRow).y,
+                  stressTensor.vectorAt(idx, stressRow).z,
+                  tau.x, tau.y, tau.z,
+                  SAT.x, SAT.y, SAT.z);
+        }
+    }
+    if (!p1_ok) {
+        const real3 sigma_n = +1.0 * stressTensor.vectorAt(idx, stressRow);
+        const real3 tau     =        traction.getSide(i,  1).vectorAt(idx);
+        const real3 SAT     = SatSign * wi * Sigma * (tau - sigma_n);
+        f += SAT;
+
+        if (idx == TEST_IDX_RX || idx == TEST_IDX_RX_Y) {
+            printf("PLUS  face i=%d idx=%d coo=(%d,%d,%d) "
+                  "sigma_row=(%+.4e,%+.4e,%+.4e) tau=(%+.4e,%+.4e,%+.4e) SAT=(%+.4e,%+.4e,%+.4e)\n",
+                  i, idx, coo.x, coo.y, coo.z,
+                  stressTensor.vectorAt(idx, stressRow).x,
+                  stressTensor.vectorAt(idx, stressRow).y,
+                  stressTensor.vectorAt(idx, stressRow).z,
+                  tau.x, tau.y, tau.z,
+                  SAT.x, SAT.y, SAT.z);
+        }
     }
   }
 
@@ -109,7 +154,6 @@ __global__ void k_internalBodyForce(CuField fField,
 
 
 Field evalInternalBodyForce(const Magnet* magnet) {
-
   Field fField(magnet->system(), 3);
   if (stressTensorAssuredZero(magnet)) {
     fField.makeZero();
@@ -129,5 +173,6 @@ Field evalInternalBodyForce(const Magnet* magnet) {
 }
 
 M_FieldQuantity internalBodyForceQuantity(const Magnet* magnet) {
-  return M_FieldQuantity(magnet, evalInternalBodyForce, 3, "internal_body_force", "N/m3");
+  return M_FieldQuantity(magnet, evalInternalBodyForce, 3,
+                         "internal_body_force", "N/m3");
 }
