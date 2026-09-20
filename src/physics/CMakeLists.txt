@@ -74,6 +74,7 @@ add_library(physics STATIC
     poyntingvector.hpp
     relaxer.hpp
     relaxer.cpp
+    strainstencil.hpp
     straintensor.cu
     straintensor.hpp
     stresstensor.cu

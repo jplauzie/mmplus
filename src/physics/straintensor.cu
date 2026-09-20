@@ -3,6 +3,7 @@
 #include "field.hpp"
 #include "parameter.hpp"
 #include "straintensor.hpp"
+#include "strainstencil.hpp"
 
 
 bool strainTensorAssuredZero(const Magnet* magnet) {
@@ -28,53 +29,31 @@ __global__ void k_strainTensor(CuField strain,
   }
 
   const real ws[3] = {w.x, w.y, w.z};
-  const int3 im2_arr[3] = {int3{-2, 0, 0}, int3{0,-2, 0}, int3{0, 0,-2}};
-  const int3 im1_arr[3] = {int3{-1, 0, 0}, int3{0,-1, 0}, int3{0, 0,-1}};
-  const int3 ip1_arr[3] = {int3{ 1, 0, 0}, int3{0, 1, 0}, int3{0, 0, 1}};
-  const int3 ip2_arr[3] = {int3{ 2, 0, 0}, int3{0, 2, 0}, int3{0, 0, 2}};
+  const int3 dir[3] = {int3{1,0,0}, int3{0,1,0}, int3{0,0,1}};
   const int3 coo = grid.index2coord(idx);
 
-  real der[3][3] = {{0,0,0}, {0,0,0}, {0,0,0}};  // derivatives ∂i(mj)
-  real3 u_0 = u.vectorAt(idx);
+  real der[3][3] = {{0,0,0}, {0,0,0}, {0,0,0}};  // derivatives ∂i(uj)
+  const real3 u_0 = u.vectorAt(idx);
 #pragma unroll
   for (int i = 0; i < 3; i++) {  // i is a {x, y, z} direction
-    // take translation in i direction
-    real wi = ws[i]; 
-    int3 im2 = im2_arr[i], im1 = im1_arr[i];  // transl in direction -i
-    int3 ip1 = ip1_arr[i], ip2 = ip2_arr[i];  // transl in direction +i
-
-    int3 coo_im2 = mastergrid.wrap(coo + im2);
-    int3 coo_im1 = mastergrid.wrap(coo + im1);
-    int3 coo_ip1 = mastergrid.wrap(coo + ip1);
-    int3 coo_ip2 = mastergrid.wrap(coo + ip2);
-
-    // determine a derivative ∂i(m)
-    real3 dudi;
-    if (!system.inGeometry(coo_im1) && !system.inGeometry(coo_ip1)) {
-      // --1-- zero
-      dudi = real3{0, 0, 0};
-    } else if ((!system.inGeometry(coo_im2) || !system.inGeometry(coo_ip2)) &&
-                system.inGeometry(coo_im1) && system.inGeometry(coo_ip1)) {
-      // -111-, 1111-, -1111 central difference,  ε ~ h^2
-      dudi = 0.5 * (u.vectorAt(coo_ip1) - u.vectorAt(coo_im1));
-    } else if (!system.inGeometry(coo_im2) && !system.inGeometry(coo_ip1)) {
-      // -11-- backward difference, ε ~ h^1
-      dudi =  (u_0 - u.vectorAt(coo_im1));
-    } else if (!system.inGeometry(coo_im1) && !system.inGeometry(coo_ip2)) {
-      // --11- forward difference,  ε ~ h^1
-      dudi = (-u_0 + u.vectorAt(coo_ip1));
-    } else if (system.inGeometry(coo_im2) && !system.inGeometry(coo_ip1)) {
-      // 111-- backward difference, ε ~ h^2
-      dudi =  (0.5 * u.vectorAt(coo_im2) - 2.0 * u.vectorAt(coo_im1) + 1.5 * u_0);
-    } else if (!system.inGeometry(coo_im1) && system.inGeometry(coo_ip1)) {
-      // --111 forward difference,  ε ~ h^2
-      dudi = (-0.5 * u.vectorAt(coo_ip2) + 2.0 * u.vectorAt(coo_ip1) - 1.5 * u_0);
-    } else {
-      // 11111 central difference,  ε ~ h^4
-      dudi = ((2.0/3.0)  * (u.vectorAt(coo_ip1) - u.vectorAt(coo_im1)) + 
-              (1.0/12.0) * (u.vectorAt(coo_im2) - u.vectorAt(coo_ip2)));
+    int3 cn[5];
+    bool g[5];
+    for (int t = -2; t <= 2; t++) {
+      cn[t+2] = (t == 0) ? coo
+                         : mastergrid.wrap(int3{coo.x + t*dir[i].x,
+                                                coo.y + t*dir[i].y,
+                                                coo.z + t*dir[i].z});
+      g[t+2] = (t == 0) ? true : system.inGeometry(cn[t+2]);
     }
-    dudi *= wi;
+    real s[5];
+    derivativeStencil(g[0], g[1], g[3], g[4], s);
+
+    real3 dudi = real3{0, 0, 0};
+    for (int k = -2; k <= 2; k++) {
+      if (s[k+2] != 0)
+        dudi += s[k+2] * (k == 0 ? u_0 : u.vectorAt(cn[k+2]));
+    }
+    dudi *= ws[i];
 
     der[i][0] = dudi.x;
     der[i][1] = dudi.y;
