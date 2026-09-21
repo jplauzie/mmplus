@@ -22,3 +22,5 @@ M_FieldQuantity elasticVelocityQuantity(const Magnet*);
 // Elastic acceleration includes all effects that influence the elastic velocity
 // including elastic, magnetoelastic and external body forces, and elastic damping.
 M_FieldQuantity elasticAccelerationQuantity(const Magnet*);
+
+real estimateMaxOmega(const Magnet* magnet);

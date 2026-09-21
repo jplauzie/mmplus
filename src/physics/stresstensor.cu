@@ -64,6 +64,16 @@ M_FieldQuantity elasticStressQuantity(const Magnet* magnet) {
   return M_FieldQuantity(magnet, [](const Magnet* m) { return evalElasticStress(m); }, 6, "elastic_stress", "N/m2");
 }
 
+Field evalElasticStressFromStrain(const Magnet* magnet, const Field& strain) {
+  Field stressTensor(magnet->system(), 6);
+  int ncells = stressTensor.grid().ncells();
+  CuParameter C11 = magnet->C11.cu();
+  CuParameter C12 = magnet->C12.cu();
+  CuParameter C44 = magnet->C44.cu();
+  cudaLaunch(ncells, k_elasticStress, stressTensor.cu(), strain.cu(), C11, C12, C44);
+  return stressTensor;
+}
+
 // --------------------------------------------------
 // Viscous Stress Tensor
 

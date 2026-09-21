@@ -3,12 +3,32 @@
 #include <cmath>
 #include <memory>
 #include <stdexcept>
+#include <algorithm>
+#include <iostream>
+#include <string>
 
 #include "field.hpp"
 #include "fieldquantity.hpp"
 #include "reduce.hpp"
 #include "rungekutta.hpp"
 #include "stepper.hpp"
+
+namespace {
+// Largest omega_max*dt for which the method does not amplify the highest-frequency
+// elastic mode. Stability only (no accuracy criterion), evaluated with the default
+// stiffness damping, times a safety factor of 0.8.
+real stableOmegaDt(RKmethod method) {
+  const real safety = 0.8;
+  switch (method) {
+    case RKmethod::HEUN:             return 0.5;  // placeholder: anti-damped at any step
+    case RKmethod::BOGACKI_SHAMPINE: return safety * 2.0;
+    case RKmethod::CASH_KARP:        return safety * 2.6;
+    case RKmethod::FEHLBERG:         return safety * 3.5;
+    case RKmethod::DORMAND_PRINCE:   return safety * 2.4;
+    default:                         return safety * 2.4;  // get() falls back to Dormand-Prince
+  }
+}
+}  // namespace
 
 std::unique_ptr<TimeSolver> TimeSolver::Factory::create() {
   return std::unique_ptr<TimeSolver>(new TimeSolver());
@@ -22,6 +42,9 @@ TimeSolver::~TimeSolver() {}
 
 void TimeSolver::setRungeKuttaMethod(RKmethod method) {
   stepper_ = std::make_unique<RungeKuttaStepper>(this, method);
+  cflTriggerCount_ = 0;
+  cflNextReport_ = 1;
+  cflMaxOvershoot_ = 1.0;
   if (!fixedTimeStep_) timestep_ = sensibleTimeStep();
   method_ = method;
 }
@@ -76,7 +99,28 @@ real TimeSolver::sensibleTimeStep() const {
 
 void TimeSolver::setEquations(std::vector<DynamicEquation> eqs) {
   eqs_ = eqs;
+  cflMaxOmega_ = -1.0;  // force a new stability estimate at the next step
   if (!fixedTimeStep_) timestep_ = sensibleTimeStep();
+}
+
+real TimeSolver::maxStableTimestep() {
+  if (cflMaxOmega_ < 0) {  // estimate once, after all setup is done
+    cflMaxOmega_ = 0.0;
+    cflTriggerCount_ = 0;
+    cflNextReport_ = 1;
+    cflMaxOvershoot_ = 1.0;
+    for (const auto& eq : eqs_)
+      if (eq.maxOmega)
+        cflMaxOmega_ = std::max(cflMaxOmega_, eq.maxOmega());
+    if (cflMaxOmega_ > 0)
+      std::cerr << "[cfl] estimated omega_max = " << cflMaxOmega_
+                << " rad/s, stable timestep limit = "
+                << stableOmegaDt(method_) / cflMaxOmega_ << " s ("
+                << getRungeKuttaNameFromMethod(method_) << ")" << std::endl;
+  }
+  if (cflMaxOmega_ <= 0)
+    return 0.0;  // no elastodynamics: no limit
+  return stableOmegaDt(method_) / cflMaxOmega_;
 }
 
 void TimeSolver::setSensibleTimestepDefault(real dt) {
@@ -107,8 +151,32 @@ void TimeSolver::step() {
     throw std::runtime_error(
         "Timesolver can not make a step because the timestep is smaller than "
         "or equal to zero.");
+
+  const real dtMax = maxStableTimestep();
+  if (dtMax > 0 && timestep_ > dtMax) {
+    cflTriggerCount_++;
+    cflMaxOvershoot_ = std::max(cflMaxOvershoot_, timestep_ / dtMax);
+
+    // print only at trigger #1, #10, #100, ...
+    if (cflTriggerCount_ >= cflNextReport_) {
+      std::cerr << "WARNING: timestep " << timestep_
+                << " s exceeds the estimated elastodynamics stability limit "
+                << dtMax << " s (omega_max = " << cflMaxOmega_ << " rad/s, "
+                << getRungeKuttaNameFromMethod(method_) << "). "
+                << (fixedTimeStep_
+                        ? "Fixed timestep kept; the simulation may become unstable."
+                        : "Timestep reduced to the limit.")
+                << " [triggered " << cflTriggerCount_
+                << " time(s), largest overshoot x" << cflMaxOvershoot_
+                << ", next report at trigger " << 10 * cflNextReport_ << "]"
+                << std::endl;
+      cflNextReport_ *= 10;
+    }
+
+    if (!fixedTimeStep_)
+      timestep_ = dtMax;  // clamp on every trigger, whether or not it was reported
+  }
   stepper_->step();
-  postStep();
 }
 
 void TimeSolver::steps(unsigned int nSteps) {

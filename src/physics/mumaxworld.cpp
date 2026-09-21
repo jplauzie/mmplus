@@ -194,6 +194,11 @@ void MumaxWorld::resetTimeSolverEquations(FM_Field torque) const {
           magnet->elasticVelocity(),
           std::shared_ptr<FieldQuantity>(elasticAccelerationQuantity(magnet).clone()));
           // No thermal noise
+
+      // CFL hook: the time solver calls this once (lazily, at the first step after
+      // setEquations) to get the largest elastic angular frequency of this magnet.
+      vaEq.maxOmega = [magnet]() { return estimateMaxOmega(magnet); };
+
       equations.push_back(vaEq);
     }
   }

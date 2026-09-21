@@ -23,3 +23,5 @@ M_FieldQuantity viscousStressQuantity(const Magnet*);
 // Total stress tensor quantity with 6 symmetric stress components  
 // [σxx, σyy, σzz, σxy, σxz, σyz]
 M_FieldQuantity stressTensorQuantity(const Magnet*);
+
+Field evalElasticStressFromStrain(const Magnet* magnet, const Field& strain);

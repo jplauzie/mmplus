@@ -18,3 +18,5 @@ M_FieldQuantity strainTensorQuantity(const Magnet*);
 // Strain rate tensor quantity with 6 symmetric strain components
 // calculated according to dε/dt = 1/2 (∇v + (∇v)^T).
 M_FieldQuantity strainRateQuantity(const Magnet*);
+
+Field evalStrainTensorOf(const Magnet* magnet, const Field& u);

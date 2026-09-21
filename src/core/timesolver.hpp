@@ -69,6 +69,10 @@ class TimeSolver {
   //------------- HELPER FUNCTIONS FOR ADAPTIVE TIMESTEPPING -------------------
 
   real sensibleTimeStep() const; /** Computes a sensible timestep */
+   //------------- STABILITY (CFL) CHECK ----------------------------------------
+  /** Largest stable timestep for elastodynamics; <= 0 means "no limit". Computed
+      once (lazily, at the first step after setEquations) and cached. */
+  real maxStableTimestep();
   void adaptTimeStep(real corr);
 
  private:
@@ -85,6 +89,10 @@ class TimeSolver {
   bool fixedTimeStep_ = false;
   std::function<void()> postStep_ = nullptr;
   std::vector<DynamicEquation> eqs_;
+  real cflMaxOmega_ = -1.0;  // < 0: not estimated yet, 0: no elastic dynamics
+  unsigned long cflTriggerCount_ = 0;  // times the CFL check triggered since the last estimate
+  unsigned long cflNextReport_ = 1;    // trigger count at which the next warning is printed
+  real cflMaxOvershoot_ = 1.0;         // largest timestep / limit seen since the last estimate
 
   //------------- THE INTERNAL STEPPER -----------------------------------------
 

@@ -142,3 +142,12 @@ Field evalStrainRate(const Magnet* magnet) {
 M_FieldQuantity strainRateQuantity(const Magnet* magnet) {
   return M_FieldQuantity(magnet, evalStrainRate, 6, "strain_rate", "1/s");
 }
+
+Field evalStrainTensorOf(const Magnet* magnet, const Field& u) {
+  Field strain(magnet->system(), 6);
+  int ncells = strain.grid().ncells();
+  real3 w = 1 / magnet->cellsize();
+  Grid mastergrid = magnet->world()->mastergrid();
+  cudaLaunch(ncells, k_strainTensor, strain.cu(), u.cu(), w, mastergrid);
+  return strain;
+}
