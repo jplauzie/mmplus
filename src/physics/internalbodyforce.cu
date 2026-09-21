@@ -23,43 +23,49 @@ __device__ inline int voigtIdx(int a, int b) {
   return 5;                        // (y,z) -> 5
 }
 
+// Compute all 21 unique face stiffnesses at once.
+// Output order matches the upper triangle of the symmetric 6x6:
+//   [0]  C11   [1]  C12   [2]  C13   [3]  C14   [4]  C15   [5]  C16
+//   [6]  C22   [7]  C23   [8]  C24   [9]  C25   [10] C26
+//   [11] C33   [12] C34   [13] C35   [14] C36
+//   [15] C44*2 [16] C45   [17] C46
+//   [18] C55*2 [19] C56
+//   [20] C66*2
+__device__ inline void computeFaceStiffness(const CuVoigtStiffness& S,
+                                            int i0, int i1,
+                                            real out[21]) {
+  out[0]  = S.C11.harmonicMean(i0, i1);
+  out[1]  = S.C12.harmonicMean(i0, i1);
+  out[2]  = S.C13.harmonicMean(i0, i1);
+  out[3]  = S.C14.harmonicMean(i0, i1);
+  out[4]  = S.C15.harmonicMean(i0, i1);
+  out[5]  = S.C16.harmonicMean(i0, i1);
+  out[6]  = S.C22.harmonicMean(i0, i1);
+  out[7]  = S.C23.harmonicMean(i0, i1);
+  out[8]  = S.C24.harmonicMean(i0, i1);
+  out[9]  = S.C25.harmonicMean(i0, i1);
+  out[10] = S.C26.harmonicMean(i0, i1);
+  out[11] = S.C33.harmonicMean(i0, i1);
+  out[12] = S.C34.harmonicMean(i0, i1);
+  out[13] = S.C35.harmonicMean(i0, i1);
+  out[14] = S.C36.harmonicMean(i0, i1);
+  out[15] = 2.0 * S.C44.harmonicMean(i0, i1);
+  out[16] = S.C45.harmonicMean(i0, i1);
+  out[17] = S.C46.harmonicMean(i0, i1);
+  out[18] = 2.0 * S.C55.harmonicMean(i0, i1);
+  out[19] = S.C56.harmonicMean(i0, i1);
+  out[20] = 2.0 * S.C66.harmonicMean(i0, i1);
+}
 
-
-__device__ inline real S_face(const CuVoigtStiffness& S,
-                              int alpha, int beta,
-                              int i0, int i1) {
+// Map (alpha, beta) to a linear index into the 21-vector above.
+__device__ inline int triIdx(int alpha, int beta) {
   if (alpha > beta) { int t = alpha; alpha = beta; beta = t; }
-  if (alpha == 0) {
-    if (beta == 0) return S.C11.harmonicMean(i0, i1);
-    if (beta == 1) return S.C12.harmonicMean(i0, i1);
-    if (beta == 2) return S.C13.harmonicMean(i0, i1);
-    if (beta == 3) return S.C14.harmonicMean(i0, i1);
-    if (beta == 4) return S.C15.harmonicMean(i0, i1);
-    return S.C16.harmonicMean(i0, i1);
-  }
-  if (alpha == 1) {
-    if (beta == 1) return S.C22.harmonicMean(i0, i1);
-    if (beta == 2) return S.C23.harmonicMean(i0, i1);
-    if (beta == 3) return S.C24.harmonicMean(i0, i1);
-    if (beta == 4) return S.C25.harmonicMean(i0, i1);
-    return S.C26.harmonicMean(i0, i1);
-  }
-  if (alpha == 2) {
-    if (beta == 2) return S.C33.harmonicMean(i0, i1);
-    if (beta == 3) return S.C34.harmonicMean(i0, i1);
-    if (beta == 4) return S.C35.harmonicMean(i0, i1);
-    return S.C36.harmonicMean(i0, i1);
-  }
-  if (alpha == 3) {
-    if (beta == 3) return 2.0 * S.C44.harmonicMean(i0, i1);
-    if (beta == 4) return S.C45.harmonicMean(i0, i1);
-    return S.C46.harmonicMean(i0, i1);
-  }
-  if (alpha == 4) {
-    if (beta == 4) return 2.0 * S.C55.harmonicMean(i0, i1);
-    return S.C56.harmonicMean(i0, i1);
-  }
-  return 2.0 * S.C66.harmonicMean(i0, i1);
+  if (alpha == 0) return beta;               // 0..5
+  if (alpha == 1) return 6 + (beta - 1);     // 6..10
+  if (alpha == 2) return 11 + (beta - 2);    // 11..14
+  if (alpha == 3) return 15 + (beta - 3);    // 15..17
+  if (alpha == 4) return 18 + (beta - 4);    // 18..19
+  return 20;                                 // (5,5)
 }
 
 
@@ -206,10 +212,12 @@ __global__ void k_internalBodyForceFlux(CuField fField,
       for (int k = 0; k < 6; k++) eps_f[k] = 0.5 * (eps0[k] + strain.valueAt(idx_p, k));
       eps_f[b] = (comp(u.vectorAt(coo_p), b) - comp(u.vectorAt(coo), b)) * ws[b];
 
+      real Ch_p[21];
+      computeFaceStiffness(S, idx, idx_p, Ch_p);
       for (int a = 0; a < 3; a++) {
         const int alpha = voigtIdx(a, b);
         for (int beta = 0; beta < 6; beta++) {
-          sig_p[a] += S_face(S, alpha, beta, idx, idx_p) * eps_f[beta];
+          sig_p[a] += Ch_p[triIdx(alpha, beta)] * eps_f[beta];
         }
       }
     } else {
@@ -225,10 +233,13 @@ __global__ void k_internalBodyForceFlux(CuField fField,
       for (int k = 0; k < 6; k++) eps_f[k] = 0.5 * (strain.valueAt(idx_m, k) + eps0[k]);
       eps_f[b] = (comp(u.vectorAt(coo), b) - comp(u.vectorAt(coo_m), b)) * ws[b];
 
+
+      real Ch_m[21];
+      computeFaceStiffness(S, idx_m, idx, Ch_m);
       for (int a = 0; a < 3; a++) {
         const int alpha = voigtIdx(a, b);
         for (int beta = 0; beta < 6; beta++) {
-          sig_m[a] += S_face(S, alpha, beta, idx_m, idx) * eps_f[beta];
+          sig_m[a] += Ch_m[triIdx(alpha, beta)] * eps_f[beta];
         }
       }
     } else {
