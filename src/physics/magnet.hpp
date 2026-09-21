@@ -89,6 +89,16 @@ class Magnet {
   Parameter C11;  // C11 = C22 = C33
   Parameter C12;  // C12 = C13 = C23
   Parameter C44;  // C44 = C55 = C66
+    // Voigt stiffness tensor, upper triangle (21 components, symmetric)
+  Parameter C13, C14, C15, C16;
+  Parameter C22, C23, C24, C25, C26;
+  Parameter C33, C34, C35, C36;
+  Parameter C45, C46;
+  Parameter C55, C56;
+  Parameter C66;
+
+  // Convenience setter for isotropic material
+  void setIsotropicStiffness(real C11, real C12, real C44);
 
   Parameter eta;  // Phenomenological elastic damping constant
   Parameter stiffnessDamping;  // eta_ij = stiffnessDamping * Cij

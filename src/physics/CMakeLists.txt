@@ -94,6 +94,7 @@ add_library(physics STATIC
     torque.hpp
     traction.cpp
     traction.hpp
+    voigtstiffness.hpp
     quantityevaluator.hpp
     zeeman.cu
     zeeman.hpp

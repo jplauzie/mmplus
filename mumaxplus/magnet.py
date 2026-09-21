@@ -317,6 +317,23 @@ class Magnet(ABC):
         self.C12.set(value)
 
     @property
+    def C13(self) -> Parameter:
+        """Stiffness constant C13 (N/m²)."""
+        return Parameter(self._impl.C13)
+
+    @C13.setter
+    def C13(self, value):
+        self.C13.set(value)
+
+    @property
+    def C14(self) -> Parameter:
+        return Parameter(self._impl.C14)
+
+    @C14.setter
+    def C14(self, value):
+        self.C14.set(value)
+
+    @property
     def C44(self) -> Parameter:
         """Stiffness constant C44 = C55 = C66 of the stiffness tensor (N/m²).
 
@@ -759,3 +776,23 @@ class Magnet(ABC):
         StrayField
         """
         return self.stray_field_from_magnet(self)
+
+# ----------------------------------------------------------------------
+# Dynamically attach the remaining 18 stiffness-parameter properties.
+# Must be at module scope, after the Magnet class body is complete.
+# ----------------------------------------------------------------------
+
+def _make_stiffness_property(name):
+    def getter(self):
+        return Parameter(getattr(self._impl, name))
+    def setter(self, value):
+        getattr(self, name).set(value)
+    return property(getter, setter, doc=f"Stiffness constant {name} (N/m²).")
+
+for _name in ["C13", "C14", "C15", "C16",
+              "C22", "C23", "C24", "C25", "C26",
+              "C33", "C34", "C35", "C36",
+              "C45", "C46",
+              "C55", "C56",
+              "C66"]:
+    setattr(Magnet, _name, _make_stiffness_property(_name))

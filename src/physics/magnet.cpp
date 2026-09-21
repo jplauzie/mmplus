@@ -28,6 +28,24 @@ Magnet::Magnet(std::shared_ptr<System> system_ptr,
       C11(system(), 0.0, name + ":C11", "N/m2"),
       C12(system(), 0.0, name + ":C12", "N/m2"),
       C44(system(), 0.0, name + ":C44", "N/m2"),
+      C13(system(), 0.0, name + ":C13", "N/m2"),
+      C14(system(), 0.0, name + ":C14", "N/m2"),
+      C15(system(), 0.0, name + ":C15", "N/m2"),
+      C16(system(), 0.0, name + ":C16", "N/m2"),
+      C22(system(), 0.0, name + ":C22", "N/m2"),
+      C23(system(), 0.0, name + ":C23", "N/m2"),
+      C24(system(), 0.0, name + ":C24", "N/m2"),
+      C25(system(), 0.0, name + ":C25", "N/m2"),
+      C26(system(), 0.0, name + ":C26", "N/m2"),
+      C33(system(), 0.0, name + ":C33", "N/m2"),
+      C34(system(), 0.0, name + ":C34", "N/m2"),
+      C35(system(), 0.0, name + ":C35", "N/m2"),
+      C36(system(), 0.0, name + ":C36", "N/m2"),
+      C45(system(), 0.0, name + ":C45", "N/m2"),
+      C46(system(), 0.0, name + ":C46", "N/m2"),
+      C55(system(), 0.0, name + ":C55", "N/m2"),
+      C56(system(), 0.0, name + ":C56", "N/m2"),
+      C66(system(), 0.0, name + ":C66", "N/m2"),
       eta(system(), 0.0, name + ":eta", "kg/m3s"),
       // Damping ratio of 5% at 1 THz
       stiffnessDamping(system(), 5e-14 / 3.1415926535897931, name + ":stiffness_damping", "s"),
@@ -58,7 +76,15 @@ Magnet::Magnet(Magnet&& other) noexcept
       name_(other.name_),
       
       externalBodyForce(other.externalBodyForce),
-      C11(other.C11), C12(other.C12), C44(other.C44),
+      C11(other.C11), C12(other.C12), C13(other.C13),
+      C14(other.C14), C15(other.C15), C16(other.C16),
+      C22(other.C22), C23(other.C23), C24(other.C24),
+      C25(other.C25), C26(other.C26),
+      C33(other.C33), C34(other.C34), C35(other.C35),
+      C36(other.C36),
+      C44(other.C44), C45(other.C45), C46(other.C46),
+      C55(other.C55), C56(other.C56),
+      C66(other.C66),
       eta(other.eta), eta11(other.eta11), eta12(other.eta12), eta44(other.eta44),
       stiffnessDamping(other.stiffnessDamping),
       rho(other.rho),
@@ -80,9 +106,15 @@ Magnet& Magnet::operator=(Magnet&& other) noexcept {
 
         // TODO: add reset to `other` of some kind? idk
         externalBodyForce = other.externalBodyForce;
-        C11 = other.C11;
-        C12 = other.C12;
-        C44 = other.C44;
+        C11=other.C11; C12=other.C12; C13=other.C13;
+        C14=other.C14; C15=other.C15; C16=other.C16;
+        C22=other.C22; C23=other.C23; C24=other.C24;
+        C25=other.C25; C26=other.C26;
+        C33=other.C33; C34=other.C34; C35=other.C35;
+        C36=other.C36;
+        C44=other.C44; C45=other.C45; C46=other.C46;
+        C55=other.C55; C56=other.C56;
+        C66=other.C66;
         eta = other.eta;
         stiffnessDamping = other.stiffnessDamping;
         eta11 = other.eta11;
@@ -239,4 +271,10 @@ void Magnet::setEnableElastodynamics(bool value) {
 
     this->mumaxWorld()->resetTimeSolverEquations();
   }
+}
+
+void Magnet::setIsotropicStiffness(real c11, real c12, real c44) {
+  C11.set(c11); C22.set(c11); C33.set(c11);
+  C12.set(c12); C13.set(c12); C23.set(c12);
+  C44.set(c44); C55.set(c44); C66.set(c44);
 }

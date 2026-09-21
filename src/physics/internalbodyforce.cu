@@ -6,6 +6,62 @@
 #include "parameter.hpp"
 #include "stresstensor.hpp"
 #include "traction.hpp"
+#include "voigtstiffness.hpp"
+#include "straintensor.hpp"
+
+__device__ inline real comp(const real3& v, int i) {
+  if (i == 0) return v.x;
+  if (i == 1) return v.y;
+  return v.z;
+}
+
+__device__ inline int voigtIdx(int a, int b) {
+  if (a == b) return a;
+  if (a > b) { int t = a; a = b; b = t; }
+  if (a == 0 && b == 1) return 3;  // (x,y) -> 3
+  if (a == 0 && b == 2) return 4;  // (x,z) -> 4
+  return 5;                        // (y,z) -> 5
+}
+
+
+
+__device__ inline real S_face(const CuVoigtStiffness& S,
+                              int alpha, int beta,
+                              int i0, int i1) {
+  if (alpha > beta) { int t = alpha; alpha = beta; beta = t; }
+  if (alpha == 0) {
+    if (beta == 0) return S.C11.harmonicMean(i0, i1);
+    if (beta == 1) return S.C12.harmonicMean(i0, i1);
+    if (beta == 2) return S.C13.harmonicMean(i0, i1);
+    if (beta == 3) return S.C14.harmonicMean(i0, i1);
+    if (beta == 4) return S.C15.harmonicMean(i0, i1);
+    return S.C16.harmonicMean(i0, i1);
+  }
+  if (alpha == 1) {
+    if (beta == 1) return S.C22.harmonicMean(i0, i1);
+    if (beta == 2) return S.C23.harmonicMean(i0, i1);
+    if (beta == 3) return S.C24.harmonicMean(i0, i1);
+    if (beta == 4) return S.C25.harmonicMean(i0, i1);
+    return S.C26.harmonicMean(i0, i1);
+  }
+  if (alpha == 2) {
+    if (beta == 2) return S.C33.harmonicMean(i0, i1);
+    if (beta == 3) return S.C34.harmonicMean(i0, i1);
+    if (beta == 4) return S.C35.harmonicMean(i0, i1);
+    return S.C36.harmonicMean(i0, i1);
+  }
+  if (alpha == 3) {
+    if (beta == 3) return 2.0 * S.C44.harmonicMean(i0, i1);
+    if (beta == 4) return S.C45.harmonicMean(i0, i1);
+    return S.C46.harmonicMean(i0, i1);
+  }
+  if (alpha == 4) {
+    if (beta == 4) return 2.0 * S.C55.harmonicMean(i0, i1);
+    return S.C56.harmonicMean(i0, i1);
+  }
+  return 2.0 * S.C66.harmonicMean(i0, i1);
+}
+
 
 
 __device__ int tensorComp(int row, int col) {
@@ -107,23 +163,116 @@ __global__ void k_internalBodyForce(CuField fField,
   fField.setVectorInCell(idx, f);
 }
 
+__global__ void k_internalBodyForceFlux(CuField fField,
+                                        const CuField u,
+                                        const CuField strain,
+                                        const CuVoigtStiffness S,
+                                        const CuBoundaryTraction traction,
+                                        const real3 w,
+                                        const Grid mastergrid) {
+  const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  const CuSystem system = fField.system;
+  const Grid grid = system.grid;
+
+  if (!system.inGeometry(idx)) {
+    if (grid.cellInGrid(idx)) fField.setVectorInCell(idx, real3{0, 0, 0});
+    return;
+  }
+
+  const real ws[3] = {w.x, w.y, w.z};
+  const int3 e[3] = {int3{1,0,0}, int3{0,1,0}, int3{0,0,1}};
+  const int3 coo = grid.index2coord(idx);
+
+  // Cache current-cell strain (true strain, Voigt order xx,yy,zz,yz,xz,xy)
+  real eps0[6];
+  for (int k = 0; k < 6; k++) eps0[k] = strain.valueAt(idx, k);
+
+  real f[3] = {0, 0, 0};
+
+  for (int b = 0; b < 3; b++) {
+    const int3 coo_p = mastergrid.wrap(coo + e[b]);
+    const int3 coo_m = mastergrid.wrap(coo - e[b]);
+    const bool p_in = system.inGeometry(coo_p);
+    const bool m_in = system.inGeometry(coo_m);
+    const int idx_p = grid.coord2index(coo_p);
+    const int idx_m = grid.coord2index(coo_m);
+
+    // ---------- +b face ----------
+    real sig_p[3] = {0, 0, 0};
+    if (p_in) {
+      // Face strain: diagonal component (a=b) uses direct gradient,
+      // off-diagonal uses average of cell strains.
+      real eps_f[6];
+      for (int k = 0; k < 6; k++) eps_f[k] = 0.5 * (eps0[k] + strain.valueAt(idx_p, k));
+      eps_f[b] = (comp(u.vectorAt(coo_p), b) - comp(u.vectorAt(coo), b)) * ws[b];
+
+      for (int a = 0; a < 3; a++) {
+        const int alpha = voigtIdx(a, b);
+        for (int beta = 0; beta < 6; beta++) {
+          sig_p[a] += S_face(S, alpha, beta, idx, idx_p) * eps_f[beta];
+        }
+      }
+    } else {
+      // Traction at +b face: sigma_ab = t_a  (sign convention from existing kernel)
+      const real3 t = traction.getSide(b, +1).vectorAt(idx);
+      sig_p[0] = t.x; sig_p[1] = t.y; sig_p[2] = t.z;
+    }
+
+    // ---------- -b face ----------
+    real sig_m[3] = {0, 0, 0};
+    if (m_in) {
+      real eps_f[6];
+      for (int k = 0; k < 6; k++) eps_f[k] = 0.5 * (strain.valueAt(idx_m, k) + eps0[k]);
+      eps_f[b] = (comp(u.vectorAt(coo), b) - comp(u.vectorAt(coo_m), b)) * ws[b];
+
+      for (int a = 0; a < 3; a++) {
+        const int alpha = voigtIdx(a, b);
+        for (int beta = 0; beta < 6; beta++) {
+          sig_m[a] += S_face(S, alpha, beta, idx_m, idx) * eps_f[beta];
+        }
+      }
+    } else {
+      // Traction at -b face: sigma_ab = -t_a
+      const real3 t = traction.getSide(b, -1).vectorAt(idx);
+      sig_m[0] = -t.x; sig_m[1] = -t.y; sig_m[2] = -t.z;
+    }
+
+    // ---------- accumulate ----------
+    f[0] += (sig_p[0] - sig_m[0]) * ws[b];
+    f[1] += (sig_p[1] - sig_m[1]) * ws[b];
+    f[2] += (sig_p[2] - sig_m[2]) * ws[b];
+  }
+
+  fField.setVectorInCell(idx, real3{f[0], f[1], f[2]});
+}
 
 Field evalInternalBodyForce(const Magnet* magnet) {
-
   Field fField(magnet->system(), 3);
   if (stressTensorAssuredZero(magnet)) {
     fField.makeZero();
     return fField;
   }
 
-  int ncells = fField.grid().ncells();
-  Field stressTensor = evalStressTensor(magnet);
+  Field strain = evalStrainTensor(magnet);
+  Field u = magnet->elasticDisplacement()->eval();
+
+  CuVoigtStiffness S{
+      magnet->C11.cu(), magnet->C12.cu(), magnet->C13.cu(),
+      magnet->C14.cu(), magnet->C15.cu(), magnet->C16.cu(),
+      magnet->C22.cu(), magnet->C23.cu(), magnet->C24.cu(),
+      magnet->C25.cu(), magnet->C26.cu(),
+      magnet->C33.cu(), magnet->C34.cu(), magnet->C35.cu(),
+      magnet->C36.cu(),
+      magnet->C44.cu(),magnet->C45.cu(), magnet->C46.cu(),
+      magnet->C55.cu(), magnet->C56.cu(),
+      magnet->C66.cu()
+  };
   CuBoundaryTraction traction = magnet->boundaryTraction.cu();
-  real3 w = 1. / magnet->cellsize();
+  real3 w = 1.0 / magnet->cellsize();
   Grid mastergrid = magnet->world()->mastergrid();
 
-  cudaLaunch(ncells, k_internalBodyForce, fField.cu(), stressTensor.cu(),
-             traction, w, mastergrid);
+  cudaLaunch(fField.grid().ncells(), k_internalBodyForceFlux,
+             fField.cu(), u.cu(), strain.cu(), S, traction, w, mastergrid);
 
   return fField;
 }
@@ -131,3 +280,5 @@ Field evalInternalBodyForce(const Magnet* magnet) {
 M_FieldQuantity internalBodyForceQuantity(const Magnet* magnet) {
   return M_FieldQuantity(magnet, evalInternalBodyForce, 3, "internal_body_force", "N/m3");
 }
+
+
