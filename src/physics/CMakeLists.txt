@@ -18,6 +18,7 @@ add_library(physics STATIC
     demag.hpp
     newellasymptotic.cu
     newellasymptotic.hpp
+    derivativestencil.hpp
     dmi.cu
     dmi.hpp
     dmitensor.cpp
