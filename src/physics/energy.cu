@@ -16,6 +16,7 @@
 #include "local_dmi.hpp"
 #include "magnetoelasticfield.hpp"
 #include "ncafm.hpp"
+#include "reduce.hpp"
 #include "world.hpp"
 #include "zeeman.hpp"
 
@@ -98,6 +99,52 @@ Field evalTotalEnergyDensity(const Ferromagnet* magnet) {
     edens += evalElasticEnergyDensity(magnet);
   }
   return edens;
+}
+
+// acc += |term| per cell
+__global__ void k_addAbs(CuField acc, const CuField term) {
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (!acc.cellInGrid(idx) || !acc.cellInGeometry(idx))
+    return;
+  acc.setValueInCell(idx, 0, acc.valueAt(idx, 0) + fabs(term.valueAt(idx, 0)));
+}
+
+// NOTE: keep the term list in sync with evalTotalEnergyDensity(const Ferromagnet*).
+void evalTotalEnergyAndScale(const Ferromagnet* magnet, real& E, real& scale) {
+  Field edens(magnet->system(), 1, 0.0);
+  Field absAcc(magnet->system(), 1, 0.0);
+  auto addTerm = [&](const Field& term) {
+    edens += term;
+    cudaLaunch(absAcc.grid().ncells(), k_addAbs, absAcc.cu(), term.cu());
+  };
+
+  if (!exchangeAssuredZero(magnet))
+    addTerm(evalExchangeEnergyDensity(magnet));
+  if (!anisotropyAssuredZero(magnet))
+    addTerm(evalAnisotropyEnergyDensity(magnet));
+  if (!externalFieldAssuredZero(magnet))
+    addTerm(evalZeemanEnergyDensity(magnet));
+  if (!inhomoDmiAssuredZero(magnet))
+    addTerm(evalDmiEnergyDensity(magnet));
+  if (!homoDmiAssuredZero(magnet))
+    addTerm(evalHomoDmiEnergyDensity(magnet));
+  if (!demagFieldAssuredZero(magnet))
+    addTerm(evalDemagEnergyDensity(magnet));
+  if (!homoAfmExchangeAssuredZero(magnet))
+    addTerm(evalHomoAfmExchangeEnergyDensity(magnet));
+  if (!inHomoAfmExchangeAssuredZero(magnet))
+    addTerm(evalInHomoAfmExchangeEnergyDensity(magnet));
+  if (!atmExchangeAssuredZero(magnet))
+    addTerm(evalAtmExchangeEnergyDensity(magnet));
+  if (!magnetoelasticAssuredZero(magnet))
+    addTerm(evalMagnetoelasticEnergyDensity(magnet));
+  if (!kineticEnergyAssuredZero(magnet))
+    addTerm(evalKineticEnergyDensity(magnet));
+  if (!elasticityAssuredZero(magnet))
+    addTerm(evalElasticEnergyDensity(magnet));
+
+  E = energyFromEnergyDensity(magnet, fieldComponentAverage(edens, 0));
+  scale = energyFromEnergyDensity(magnet, fieldComponentAverage(absAcc, 0));
 }
 
 Field evalTotalEnergyDensity(const HostMagnet* magnet) {

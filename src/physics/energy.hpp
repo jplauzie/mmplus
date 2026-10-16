@@ -18,6 +18,13 @@ Field evalTotalEnergyDensity(const Ferromagnet*);
 Field evalTotalEnergyDensity(const HostMagnet*);
 real evalTotalEnergy(const Magnet*);
 
+// Energy of a ferromagnet together with the noise scale of that energy:
+//   scale = V * sum over cells and terms of |e_term|   (always >= |E|)
+// Cancellation between terms and between cells makes |E| alone too small a scale
+// for float32 rounding noise in E. E equals evalTotalEnergy(magnet).
+// MUST list the same terms as evalTotalEnergyDensity(const Ferromagnet*).
+void evalTotalEnergyAndScale(const Ferromagnet*, real& E, real& scale);
+
 template <class T>
 FieldQuantityEvaluator<T> totalEnergyDensityQuantity(const T* magnet) {
   return FieldQuantityEvaluator<T>(

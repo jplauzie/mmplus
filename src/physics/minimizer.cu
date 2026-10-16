@@ -31,6 +31,12 @@ static const double minimizerBMax = 1e6;
 // lsLogMaxStep minimizer steps, to keep the output manageable.
 static const int lsLogMaxStep = 200;
 
+// Absolute noise level of the energy, given its scale (see evalTotalEnergyAndScale).
+// Used by the line search and by every accept/reject test, so they all agree.
+static inline double energyNoise(double scale) {
+  return 4 * realEps * scale;
+}
+
 Minimizer::Minimizer(const Ferromagnet* magnet,
                      real stopMaxMagDiff,
                      int nMagDiffSamples,
@@ -50,10 +56,11 @@ Minimizer::Minimizer(const Ferromagnet* magnet,
       t1(1),
       m0(1),
       m1(1) {
-  stepsize_ = 1e-14;  // TODO: figure out how to make descent guess
+  stepsize_ = 1e-14;
   // TODO: check if input arguments are sane
-  if (mode_ < 0 || mode_ > 3)
+  if (mode_ < 0 || mode_ > 3) {
     throw std::invalid_argument("Minimizer: lineSearchMode must be 0..3.");
+  }
 }
 
 Minimizer::Minimizer(const HostMagnet* magnet,
@@ -77,8 +84,9 @@ Minimizer::Minimizer(const HostMagnet* magnet,
   stepsize_ = 1e-14;
   for (auto sub : magnets_)
     torques_.push_back(relaxTorqueQuantity(sub));
-  if (mode_ < 0 || mode_ > 3)
+  if (mode_ < 0 || mode_ > 3) {
     throw std::invalid_argument("Minimizer: lineSearchMode must be 0..3.");
+  }
 }
 
 Minimizer::Minimizer(const MumaxWorld* world,
@@ -94,8 +102,9 @@ Minimizer::Minimizer(const MumaxWorld* world,
       maxStepAngle_(maxStepAngle),
       maxStall_(maxStall),
       verbose_(verbose) {
-  if (mode_ < 0 || mode_ > 3)
+  if (mode_ < 0 || mode_ > 3) {
     throw std::invalid_argument("Minimizer: lineSearchMode must be 0..3.");
+  }
 
   // Find all ferromagnets (FM instances or sublattices)
   for (const auto pair : world->magnets()) {
@@ -141,9 +150,11 @@ void Minimizer::exec() {
   energyScale_ = 0;
   nLineSearches_ = 0;
   nGllRescues_ = 0;
+  lsEvals_ = 0;
 
-  // Gate for the BB step clamp: |h|*max|t| can only exceed 1/eps when
-  // |h| > 1/(eps * gammaMax * bMax), with t = gamma * B_perp.
+  // Gate for the BB step clamp: Clamp |h|*max|t| to 1/eps. Since torque = gamma*B_perp
+  // and |B_perp| <= bMax, the proposed step can only violate that limit if
+  // |h| > 1/(eps*gammaMax*bMax). Below this |h| the max|t| reduction is skipped.
   double gammaMax = 0;
   for (const Ferromagnet* magnet : magnets_) {
     const Parameter& g = magnet->gamma;
@@ -153,13 +164,16 @@ void Minimizer::exec() {
   }
   hCheck_ = gammaMax > 0 ? 1 / (realEps * gammaMax * minimizerBMax)
                          : std::numeric_limits<double>::infinity();
+  if (verbose_ > 3)
+    debugSlopeCheck();
 
   while (!converged() && !stuck_)
     step();
 
   if (verbose_ > 0)
     std::cout << "Minimize: " << nsteps_ << " steps, " << nLineSearches_
-              << " line searches, " << nGllRescues_ << " GLL rescues" << std::endl;
+              << " line searches, " << nGllRescues_ << " GLL rescues" << ", "
+              << lsEvals_ << " line search evals" << std::endl;
 }
 
 __global__ void k_step(CuField mField,
@@ -205,9 +219,60 @@ static inline real BarzilaiBorweinStepSize(std::vector<Field>& dm,
 
 static real maxVecNormAll(const std::vector<Field>& v) {
   real m = 0;
-  for (const Field& f : v)
+  for (const Field& f : v) {
     m = std::max(m, maxVecNorm(f));
+  }
   return m;
+}
+
+// TEMP-DIAG: compare the analytic slope phi'(a) from slopeAlongLine with a
+// central difference of the energy along the same curve the line search uses.
+void Minimizer::debugSlopeCheck() {
+  const size_t N = magnets_.size();
+  std::vector<Field> base(N), dir(N);
+  for (size_t i = 0; i < N; i++) {
+    m1[i] = Field(magnets_[i]->system(), 3);  // stepAlong writes into m1
+    base[i] = magnets_[i]->magnetization()->eval();
+    dir[i] = torques_[i].eval();
+  }
+  double maxDirNorm = maxVecNormAll(dir);
+  if (!(maxDirNorm > 0)) {
+    std::printf("SLOPECHECK: zero torque, nothing to check\n");
+    return;
+  }
+
+  auto phi = [&](double a) {
+#if LS_CAYLEY
+    stepAlong(base, dir, real(a));
+#else
+    stepStraight(base, dir, real(a));
+#endif
+    return double(minimizerEnergy());  // also sets energyScale_
+  };
+  auto dphi = [&](double a) {
+#if LS_CAYLEY
+    stepAlong(base, dir, real(a));
+#else
+    stepStraight(base, dir, real(a));
+#endif
+    trialEnergyAndTorque();  // fills tTrial_ with torque at m(a)
+    return slopeAlongLine(base, dir, tTrial_, real(a));
+  };
+
+  // displacements d = a*max|dir| to probe
+  for (double d : {1e-3, 1e-2, 1e-1, 5e-1}) {
+    double a = d / maxDirNorm;
+    double h = 0.1 * a;  // central-difference half-width
+    double Ep = phi(a + h), Em = phi(a - h);
+    double fd = (Ep - Em) / (2 * h);
+    double an = dphi(a);
+    double noise = energyNoise(energyScale_) / h;  // rough error bar on fd
+    std::printf(
+        "SLOPECHECK d=%.1e  analytic=%.6e  central_diff=%.6e  "
+        "ratio=%.5f  (fd noise ~ %.1e)\n",
+        d, an, fd, fd / an, noise);
+  }
+  setMagnetization(base);  // restore the state
 }
 
 void Minimizer::step() {
@@ -241,13 +306,15 @@ void Minimizer::step() {
     if (hBadNext_ || !std::isfinite(hf) || hf == 0) {
       badH = true;
     } else {
-      if (std::abs(hf) > hMax)
+      if (std::abs(hf) > hMax) {
         hf = std::copysign(hMax, hf);
+      }
       // Only compute max|t| when the clamp could possibly fire (see hCheck_ in exec()).
       if (std::abs(hf) > hCheck_) {
         double tMax = maxVecNormAll(t0);
-        if (tMax > 0 && std::abs(hf) * tMax > 1 / realEps)
+        if (tMax > 0 && std::abs(hf) * tMax > 1 / realEps) {
           hf = std::copysign(1 / (realEps * tMax), hf);
+        }
       }
       h = hf;
     }
@@ -259,8 +326,9 @@ void Minimizer::step() {
   if (mode_ == 0) {
     // Original behavior: no line search at all, unconditional BB step every time.
     stepAlong(m0, t0, h);
-    for (size_t i = 0; i < magnets_.size(); i++)
+    for (size_t i = 0; i < magnets_.size(); i++) {
       t1[i] = torques_[i].eval();
+    }
     firstStep_ = false;
   } else {
     auto energyAtM0 = [&]() {  // cached, or computed lazily
@@ -284,6 +352,22 @@ void Minimizer::step() {
         haveF_ = true;
       }
 
+    } else if (LS_ALWAYS) {
+      // Test switch (see linesearch.hpp): no BB trial step, every step is a line
+      // search from m0 along the torque, seeded at |h|.
+      real f0 = energyAtM0();
+      double accepted;
+      moved =
+          sdLineSearch(m0, t0, f0, lastScale_, std::abs(double(h)), trialF, accepted);
+      if (!moved) {
+        moved = recoverStep(m0, t0, f0, lastScale_, trialF);
+      }
+      if (moved) {
+        lastF_ = trialF;
+        lastScale_ = energyScale_;
+        haveF_ = true;
+      }
+
     } else if (mode_ == 3) {
       real f0 = energyAtM0();
       real f0Scale = lastScale_;
@@ -294,7 +378,7 @@ void Minimizer::step() {
         setMagnetization(m0);
         moved = recoverStep(m0, t0, f0, f0Scale, trialF);
       } else if (!gllOff_ && !lastEnergies_.empty() &&
-                 trialF > maxEnergy() + 4 * realEps * energyScale_) {
+                 trialF > maxEnergy() + energyNoise(energyScale_)) {
         // GLL rejection (Exl et al. 2014).
         moved = gllRescue(f0, f0Scale, h, trialF);
       } else {
@@ -308,15 +392,16 @@ void Minimizer::step() {
 
     } else {  // modes 1 and 2 after the first step: plain BB, no energy evaluation
       stepAlong(m0, t0, h);
-      for (size_t i = 0; i < magnets_.size(); i++)
+      for (size_t i = 0; i < magnets_.size(); i++) {
         t1[i] = torques_[i].eval();
+      }
       haveF_ = false;
     }
 
     if (mode_ == 3 && moved) {
       // end a no-progress streak (and re-enable GLL rescues) once the energy has
       // dropped below the streak's reference by more than noise
-      if (stallCount_ > 0 && trialF < fRef_ - 4 * realEps * lastScale_) {
+      if (stallCount_ > 0 && trialF < fRef_ - energyNoise(lastScale_)) {
         stallCount_ = 0;
         gllOff_ = false;
       }
@@ -340,8 +425,9 @@ void Minimizer::step() {
   // The line search moves M along a different curve than the BB step, so take
   // the magnetization after the move rather than the BB result in m1.
   if (mode_ >= 1) {
-    for (size_t i = 0; i < magnets_.size(); i++)
+    for (size_t i = 0; i < magnets_.size(); i++) {
       m1[i] = magnets_[i]->magnetization()->eval();
+    }
   }
 
   // Reuse m0 and t0 for efficiency, but declare alias for clarity
@@ -358,14 +444,16 @@ void Minimizer::step() {
 
   bool degenerate;
   stepsize_ = BarzilaiBorweinStepSize(dm, dt, nsteps_, degenerate);
-  if (degenerate && mode_ >= 2)
+  if (degenerate && mode_ >= 2) {
     hBadNext_ = true;  // let recoverStep handle it
+  }
   addMagDiff(magDiff);
 
   // Mode 2: the magnetization differences say "converged"; try one line search
   // before exiting.
-  if (mode_ == 2 && converged())
+  if (mode_ == 2 && converged()) {
     convergenceRescue();
+  }
 
   nsteps_ += 1;
 }
@@ -407,16 +495,25 @@ __global__ void k_slopePartial(real* partials,
   real acc[1] = {0};
   real comp[1] = {0};
   for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < ncells; i += stride) {
-    if (!baseField.cellInGeometry(i))
+    if (!baseField.cellInGeometry(i)) {
       continue;
+    }
     real3 s = dirField.vectorAt(i);
     real3 t = torqueField.vectorAt(i);  // torque at the trial point
     real gam = gamma.valueAt(i);        // torque = gam * B_perp
     if (gam == 0)
       continue;
 #if LS_CAYLEY
-    // phi'(a) = Ms * g . dm/da with g = -t/gam and
-    // dm/da = 4[(4 - a^2 S) s - 4 a S m0] / (4 + a^2 S)^2,  S = |s|^2
+    // Per-cell contribution to phi'(a), phi(a) = E(m(a)), along the Cayley curve
+    //   m(a) = [(4 - a^2 S) m0 + 4 a s] / (4 + a^2 S),  S = |s|^2  (same as k_step).
+    // Chain rule: dE/da = -V Ms B_eff . dm/da. Only B_perp contributes, because
+    // dm/da is tangent to m(a) (|m| = 1), and the torque is t = gam * B_perp,
+    // so B_perp = t/gam and
+    //   phi'(a) = -V Ms (t . dm/da) / gam,
+    //   dm/da   = 4 [(4 - a^2 S) s - 4 a S m0] / (4 + a^2 S)^2.
+    // t must be the torque at the trial point m(a) (tTrial_). The m0 term does
+    // not vanish: t is tangent to m(a), not to m0. Assumes s . m0 = 0 (s is the
+    // torque at m0), so |m(a)| = 1 exactly. The volume V is applied on the host.
     real3 m0 = baseField.vectorAt(i);
     real S = dot(s, s);
     real a2S = step * step * S;
@@ -425,6 +522,11 @@ __global__ void k_slopePartial(real* partials,
              -4 * msat.valueAt(i) *
                  ((4 - a2S) * dot(t, s) - 4 * step * S * dot(t, m0)) / (gam * D * D));
 #else
+
+    // Straight curve m(a) = (m0 + a s) / |m0 + a s|, x = m0 + a s.
+    // dm/da = (s - m (m . s)) / |x|. The projected part drops out against t
+    // (t is tangent to m(a)), so t . dm/da = (t . s) / |x| and
+    //   phi'(a) = -V Ms (t . s) / (gam |x|).
     real3 x = baseField.vectorAt(i) + step * s;
     real n2 = dot(x, x);
     if (n2 > 0)
@@ -433,19 +535,22 @@ __global__ void k_slopePartial(real* partials,
   }
 
   blockReduceSum<real, 1>(acc);
-  if (threadIdx.x == 0)
+  if (threadIdx.x == 0) {
     partials[blockIdx.x] = acc[0];
+  }
 }
 
 // level 2: single block, double accumulation
 __global__ void k_slopeCombine(double* out, const real* partials, int np) {
   double acc[1] = {0};
-  for (int i = threadIdx.x; i < np; i += blockDim.x)
+  for (int i = threadIdx.x; i < np; i += blockDim.x) {
     acc[0] += partials[i];
+  }
 
   blockReduceSum<double, 1>(acc);
-  if (threadIdx.x == 0)
+  if (threadIdx.x == 0) {
     *out = acc[0];
+  }
 }
 
 // phi'(step) = V * sum over cells of -Ms (torque . dir) / |base + step*dir|, summed
@@ -457,8 +562,9 @@ double Minimizer::slopeAlongLine(const std::vector<Field>& base,
   double slope = 0;
   for (size_t i = 0; i < magnets_.size(); i++) {
     const Ferromagnet* magnet = magnets_[i];
-    if (magnet->msat.assuredZero())
+    if (magnet->msat.assuredZero()) {
       continue;
+    }
 
     int ncells = base[i].grid().ncells();
     int numBlocks = numReductionBlocks(ncells, k_slopePartial);
@@ -509,8 +615,9 @@ bool Minimizer::sdLineSearch(const std::vector<Field>& base,
   double maxDirNorm = maxVecNormAll(dir);
   double step0 = seed;
   if (!(step0 > 0) || std::isinf(step0)) {  // also catches NaN
-    if (maxDirNorm > 0)
+    if (maxDirNorm > 0) {
       step0 = coldDisplacement / maxDirNorm;
+    }
   }
 
   // dir is the torque at base, so it is also the torque at step 0
@@ -528,8 +635,9 @@ bool Minimizer::sdLineSearch(const std::vector<Field>& base,
     return {f, slope};
   };
   const int evals0 = lsEvals_;
-  LineSearchResult res = MTLineSearch(f0, slope0, maxDirNorm, step0, maxStepAngle_,
-                                      f0Scale, eval, verbose_ > 2 ? 1 : verbose_);
+  LineSearchResult res =
+      MTLineSearch(f0, slope0, maxDirNorm, step0, maxStepAngle_, energyNoise(f0Scale),
+                   eval, verbose_ > 2 ? 1 : verbose_);
 
   bool ok = res.step > 0 && std::isfinite(res.f) &&
             (res.info == LS_CONVERGED || res.info == LS_AT_MAX_STEP || res.f < f0);
@@ -557,7 +665,7 @@ bool Minimizer::sdLineSearch(const std::vector<Field>& base,
 // Produces a step from base when there is no usable BB step (cold start, a
 // non-finite BB step/energy, or a GLL rescue whose seeded search failed): a line
 // search from the cold seed, then fixed displacements from fallbackDisplacements
-// (the first that passes the GLL test is accepted). Same contract as sdLineSearch.
+// (the first that passes the GLL test is accepted).
 bool Minimizer::recoverStep(const std::vector<Field>& base,
                             const std::vector<Field>& dir,
                             real f0,
@@ -565,8 +673,9 @@ bool Minimizer::recoverStep(const std::vector<Field>& base,
                             real& newF) {
   setMagnetization(base);
   double step;
-  if (sdLineSearch(base, dir, f0, f0Scale, 0, newF, step))
+  if (sdLineSearch(base, dir, f0, f0Scale, 0, newF, step)) {
     return true;
+  }
 
   double maxDirNorm = maxVecNormAll(dir);
   if (!(maxDirNorm > 0)) {  // zero (or NaN) torque: nothing to step along
@@ -575,13 +684,14 @@ bool Minimizer::recoverStep(const std::vector<Field>& base,
   }
 
   real ref = f0;
-  if (!lastEnergies_.empty())
+  if (!lastEnergies_.empty()) {
     ref = maxEnergy();
+  }
 
   for (real d : fallbackDisplacements) {
     stepAlong(base, dir, d / maxDirNorm);
     real f = trialEnergyAndTorque();
-    if (f <= ref + 4 * realEps * energyScale_) {  // false for NaN
+    if (f <= ref + energyNoise(f0Scale)) {  // false for NaN
       std::swap(t1, tTrial_);
       newF = f;
       return true;
@@ -601,19 +711,20 @@ bool Minimizer::recoverStep(const std::vector<Field>& base,
 // disabled (gllOff_) from the next step on.
 bool Minimizer::gllRescue(real f0, real f0Scale, real h, real& newF) {
   nGllRescues_++;
-  if (stallCount_ == 0)
+  if (stallCount_ == 0) {
     fRef_ = f0;
+  }
   stallCount_++;
-  if (stallCount_ >= maxStall_)
+  if (stallCount_ >= maxStall_) {
     gllOff_ = true;  // takes effect next step; this rescue still runs
-
+  }
   setMagnetization(m0);  // early returns of the search leave M untouched
   double step;
   if (verbose_ > 2 && nsteps_ < lsLogMaxStep)
     std::printf("  (BB h %s)\n", h < 0 ? "negative" : "positive");
-  if (sdLineSearch(m0, t0, f0, f0Scale, std::abs(double(h)), newF, step))
+  if (sdLineSearch(m0, t0, f0, f0Scale, std::abs(double(h)), newF, step)) {
     return true;
-
+  }
   return recoverStep(m0, t0, f0, f0Scale, newF);
 }
 
@@ -625,27 +736,31 @@ bool Minimizer::gllRescue(real f0, real f0Scale, real h, real& newF) {
 void Minimizer::convergenceRescue() {
   real f0 = energyAtAccepted();
   real f0Scale = energyScale_;
-  real noise = 4 * realEps * f0Scale;
+  real noise = energyNoise(f0Scale);
 
   // Did the BB phase since the last rescue make energy progress?
   if (haveRescue_) {
-    if (f0 < fRescue_ - noise)
+    if (f0 < fRescue_ - noise) {
       rescueStall_ = 0;
-    else
+    } else {
       rescueStall_++;
-    if (rescueStall_ >= maxStall_)
+    }
+    if (rescueStall_ >= maxStall_) {
       return;  // bottomed out: let the run converge
+    }
   }
 
   std::vector<Field> mBase(magnets_.size());
-  for (size_t i = 0; i < magnets_.size(); i++)
+  for (size_t i = 0; i < magnets_.size(); i++) {
     mBase[i] = magnets_[i]->magnetization()->eval();
+  }
 
   double dirNorm = maxVecNormAll(t1);  // before the search replaces t1
   real newF;
   double step;
-  if (!sdLineSearch(mBase, t1, f0, f0Scale, 0, newF, step))
-    return;        // M, t1 untouched: converged
+  if (!sdLineSearch(mBase, t1, f0, f0Scale, 0, newF, step)) {
+    return;  // M, t1 untouched: converged
+  }
   haveF_ = false;  // M moved, so the cached energy is stale
 
   if (newF < f0 - noise && step * dirNorm > stopMaxMagDiff_) {
@@ -663,16 +778,18 @@ void Minimizer::convergenceRescue() {
 // energy
 
 // Total energy of all minimized magnets, without throwing on NaN so that callers
-// can reject a bad trial point. Also records energyScale_ = max(|E|, sum|E_i|),
-// the scale for noise in E: cancellation between magnets makes |E| alone too small.
+// can reject a bad trial point. Also records energyScale_ = V * sum over cells,
+// terms and magnets of |e_term|, the scale for float32 noise in E: cancellation
+// between terms, cells and magnets makes |E| alone too small.
 real Minimizer::minimizerEnergy() {
-  real E = 0, sum = 0;
+  real E = 0, scale = 0;
   for (const Ferromagnet* magnet : magnets_) {
-    real e = evalTotalEnergy(magnet);
+    real e, s;
+    evalTotalEnergyAndScale(magnet, e, s);
     E += e;
-    sum += std::abs(e);
+    scale += s;
   }
-  energyScale_ = std::max(std::abs(E), sum);
+  energyScale_ = std::max(scale, std::abs(E));  // max is only a safeguard
   return E;
 }
 
@@ -680,9 +797,10 @@ real Minimizer::minimizerEnergy() {
 // there cannot be rolled back, so this fails loudly.
 real Minimizer::energyAtAccepted() {
   real E = minimizerEnergy();
-  if (!std::isfinite(E))
+  if (!std::isfinite(E)) {
     throw std::runtime_error(
         "Minimize: non-finite energy at the accepted magnetization");
+  }
   return E;
 }
 

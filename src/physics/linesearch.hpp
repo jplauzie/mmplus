@@ -30,6 +30,10 @@ enum LineSearchInfo {
 #define LS_CAYLEY 1
 #endif
 
+#ifndef LS_ALWAYS
+#define LS_ALWAYS 0
+#endif
+
 struct LineSearchResult {
   double f;     // energy at the returned step
   double step;  // 0 means no improvement was found, callers must treat as failure
@@ -37,21 +41,21 @@ struct LineSearchResult {
 };
 
 // Given a step α, sets m = normalize(m0 + α*s), evaluates torque and
-// energy there, and returns (energy, slope along s). Must leave the magnetization
-// and torque at the trial point, so that on return they correspond to the
-// returned step.
+// energy there, and returns (energy, slope along s). Leaves the magnetization
+// and torque at the trial point
 using LineSearchEval = std::function<std::pair<double, double>(double step)>;
 
 // Moré-Thuente line search (Moré & Thuente, ACM TOMS 20(3), 1994; MINPACK-2) for
 // φ(α) = E(normalize(m0 + α s)), looking for α satisfying the strong Wolfe conditions.
 //   f0, slope0: φ(0) and φ'(0) (must be < 0)
 //   maxDirNorm: max |s| over cells; maxStepAngle in degrees, <=0 disables
-//   eScale: max(|E|, sum|E_i|) at m0, the scale of float32 noise in E
+//   fnoise: absolute noise level of the energy at m0, computed by the caller from
+// the energy scale (e.g. 4*realEps*scale); slack in the Armijo and "higher" tests
 LineSearchResult MTLineSearch(double f0,
                               double slope0,
                               double maxDirNorm,
                               double step0,
                               double maxStepAngle,
-                              double eScale,
+                              double fnoise,
                               const LineSearchEval& eval,
                               int verbose = 0);

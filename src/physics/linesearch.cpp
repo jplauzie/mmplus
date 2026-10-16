@@ -56,8 +56,9 @@ int cstep(lsPoint& best,
     casecode = 1;
     cubicCoeffs(best.f, best.slope, best.step, trial.f, trial.slope, trial.step, theta,
                 gamma);
-    if (trial.step < best.step)
+    if (trial.step < best.step) {
       gamma = -gamma;
+    }
     p = (gamma - best.slope) + theta;
     q = ((gamma - best.slope) + gamma) + trial.slope;
     r = p / q;
@@ -67,10 +68,11 @@ int cstep(lsPoint& best,
         ((best.slope / ((best.f - trial.f) / (trial.step - best.step) + best.slope)) /
          2.0) *
             (trial.step - best.step);
-    if (std::abs(cubic - best.step) < std::abs(quad - best.step))
+    if (std::abs(cubic - best.step) < std::abs(quad - best.step)) {
       chosen = cubic;
-    else
+    } else {
       chosen = (cubic + quad) / 2.0;
+    }
     bracketed = true;
 
   } else if (sgnd < 0.0) {
@@ -80,18 +82,20 @@ int cstep(lsPoint& best,
     casecode = 2;
     cubicCoeffs(best.f, best.slope, best.step, trial.f, trial.slope, trial.step, theta,
                 gamma);
-    if (trial.step > best.step)
+    if (trial.step > best.step) {
       gamma = -gamma;
+    }
     p = (gamma - trial.slope) + theta;
     q = ((gamma - trial.slope) + gamma) + best.slope;
     r = p / q;
     cubic = trial.step + r * (best.step - trial.step);
     quad = trial.step +
            (trial.slope / (trial.slope - best.slope)) * (best.step - trial.step);
-    if (std::abs(cubic - trial.step) > std::abs(quad - trial.step))
+    if (std::abs(cubic - trial.step) > std::abs(quad - trial.step)) {
       chosen = cubic;
-    else
+    } else {
       chosen = quad;
+    }
     bracketed = true;
 
   } else if (std::abs(trial.slope) < std::abs(best.slope)) {
@@ -99,38 +103,43 @@ int cstep(lsPoint& best,
     casecode = 3;
     cubicCoeffs(best.f, best.slope, best.step, trial.f, trial.slope, trial.step, theta,
                 gamma);
-    if (trial.step > best.step)
+    if (trial.step > best.step) {
       gamma = -gamma;
+    }
     p = (gamma - trial.slope) + theta;
     q = (gamma + (best.slope - trial.slope)) + gamma;
     r = p / q;
     // Cubic only if it tends to infinity in the step direction or its
     // minimum lies beyond trial; otherwise use the extrapolation limit.
-    if (r < 0.0 && gamma != 0.0)
+    if (r < 0.0 && gamma != 0.0) {
       cubic = trial.step + r * (best.step - trial.step);
-    else if (trial.step > best.step)
+    } else if (trial.step > best.step) {
       cubic = stpmax;
-    else
+    } else {
       cubic = stpmin;
+    }
     quad = trial.step +
            (trial.slope / (trial.slope - best.slope)) * (best.step - trial.step);
     if (bracketed) {
       // Cubic if closer to trial than the secant, else the secant; then
       // stay within 66% of the way to the other endpoint.
-      if (std::abs(cubic - trial.step) < std::abs(quad - trial.step))
+      if (std::abs(cubic - trial.step) < std::abs(quad - trial.step)) {
         chosen = cubic;
-      else
+      } else {
         chosen = quad;
-      if (trial.step > best.step)
+      }
+      if (trial.step > best.step) {
         chosen = std::min(trial.step + 0.66 * (other.step - trial.step), chosen);
-      else
+      } else {
         chosen = std::max(trial.step + 0.66 * (other.step - trial.step), chosen);
+      }
     } else {
       // Extrapolating: cubic if farther from trial than the secant.
-      if (std::abs(cubic - trial.step) > std::abs(quad - trial.step))
+      if (std::abs(cubic - trial.step) > std::abs(quad - trial.step)) {
         chosen = cubic;
-      else
+      } else {
         chosen = quad;
+      }
       chosen = std::min(stpmax, chosen);
       chosen = std::max(stpmin, chosen);
     }
@@ -141,8 +150,9 @@ int cstep(lsPoint& best,
     if (bracketed) {
       cubicCoeffs(trial.f, trial.slope, trial.step, other.f, other.slope, other.step,
                   theta, gamma);
-      if (trial.step > other.step)
+      if (trial.step > other.step) {
         gamma = -gamma;
+      }
       p = (gamma - trial.slope) + theta;
       q = ((gamma - trial.slope) + gamma) + other.slope;
       r = p / q;
@@ -175,12 +185,12 @@ LineSearchResult MTLineSearch(double f0,
                               double maxDirNorm,
                               double step0,
                               double maxStepAngle,
-                              double eScale,
+                              double fnoise,
                               const LineSearchEval& eval,
                               int verbose) {
   // these are all tunable
   const double ftol = 1e-4;  // μ (Wolfe c1)
-  const double gtol = 0.9;   // η (Wolfe c2); loose, standard for quasi-Newton
+  const double gtol = 0.9;   // η (Wolfe c2); a loose value, standard for quasi-Newton
   const double extrapFactor =
       4.0;  // unbracketed: next trial <= step + extrapFactor*(step-best)
   const double extrapLower =
@@ -188,7 +198,7 @@ LineSearchResult MTLineSearch(double f0,
   const int maxEvals = 20;
   const double bracketTol =
       1e-7;  // stop when bracket width <= bracketTol * upper end, floored at 4*eps
-  const double maxAngleLimit = 89.0;
+  const double maxAngleLimit = 177.0;
 
   if (!(step0 > 0) || std::isinf(step0)) {  // also catches NaN
     if (verbose > 0)
@@ -259,8 +269,6 @@ LineSearchResult MTLineSearch(double f0,
   double width = maxStep - minStep,
          width1 = 2 * (maxStep - minStep);  // bisection safeguard
   double stmin, stmax;
-  // float32 resolution of the energy
-  double fnoise = realEps * std::max(std::abs(f0), eScale);
 
   while (true) {
     if (std::isnan(step) || std::isinf(step)) {
@@ -273,10 +281,11 @@ LineSearchResult MTLineSearch(double f0,
       stmin = std::min(bestPoint.step, otherEndPoint.step);
       stmax = std::max(bestPoint.step, otherEndPoint.step);
     } else {
-      if (numEvals == 0)
+      if (numEvals == 0) {
         stmin = 0;  // no forced growth before the first evaluation
-      else
+      } else {
         stmin = step + extrapLower * (step - bestPoint.step);
+      }
       stmax = step + extrapFactor * (step - bestPoint.step);
     }
     // Bracket too narrow to subdivide: relative to the step, and absolute
@@ -294,8 +303,9 @@ LineSearchResult MTLineSearch(double f0,
     // M and the torque end up there. If bestPoint.step == 0 this evaluates at m0
     // and returns step == 0: callers MUST treat that as a failed line search.
     if ((bracketed && (step <= stmin || step >= stmax)) || numEvals >= maxEvals - 1 ||
-        casecode == 0 || bracketTight)
+        casecode == 0 || bracketTight) {
       step = bestPoint.step;
+    }
 
     auto [f, slope] = eval(step);
     numEvals++;
@@ -323,34 +333,46 @@ LineSearchResult MTLineSearch(double f0,
                     fnoise;  // Armijo bound: φ(0) + μ α φ'(0), plus fnoise slack
     bool curvatureOK = std::abs(slope) <= gtol * (-slope0);
 
+    // TEMP-DIAG: would a two-sided HZ test pass where Armijo fails?
+    if (!(f <= ftest1) && curvatureOK && f <= f0 + fnoise)
+      std::printf("HZDIAG step=%e f-f0=%e fnoise=%e\n", step, f - f0, fnoise);
+    // END TEMP-DIAG
+
     int info = LS_RUNNING;
 
     // bracketed but hit edge of bracket or outside
-    if ((bracketed && (step <= stmin || step >= stmax)) || casecode == 0)
+    if ((bracketed && (step <= stmin || step >= stmax)) || casecode == 0) {
       info = LS_NO_PROGRESS;
+    }
     // hit maxStep but still decreasing sufficiently (and so is slope)
-    if (step == maxStep && f <= ftest1 && slope <= armijoSlope)
+    if (step == maxStep && f <= ftest1 && slope <= armijoSlope) {
       info = LS_AT_MAX_STEP;
+    }
     // hit minStep, or step too small for float32 to resolve
     bool unresolvable = maxDirNorm > 0 && step * maxDirNorm <= 4 * realEps;
-    if ((step == minStep || unresolvable) && (f > ftest1 || slope >= armijoSlope))
+    if ((step == minStep || unresolvable) && (f > ftest1 || slope >= armijoSlope)) {
       info = LS_AT_MIN_STEP;
-    if (numEvals >= maxEvals)
+    }
+    if (numEvals >= maxEvals) {
       info = LS_MAX_EVALS;
+    }
     // bracket shrank too small
-    if (bracketTight)
+    if (bracketTight) {
       info = LS_BRACKET_TOL;
+    }
     // passes both strong Wolfe conditions
-    if (f <= ftest1 && curvatureOK)
+    if (f <= ftest1 && curvatureOK) {
       info = LS_CONVERGED;
+    }
     if (info != LS_RUNNING) {
       if (verbose > 1)
         std::printf("linesearch: info=%d evals=%d step=%e\n", info, numEvals, step);
       return {f, step, info};
     }
 
-    if (stage1 && f <= ftest1 && slope >= 0)
+    if (stage1 && f <= ftest1 && slope >= 0) {
       stage1 = false;
+    }
 
     lsPoint trial{step, f, slope};
     // if stage1, f is better than bestp, and psi>0, bracket on psi
