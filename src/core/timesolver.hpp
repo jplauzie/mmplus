@@ -39,6 +39,8 @@ class TimeSolver {
   real timestep() const { return timestep_; }
   real upperBound() const { return upperBound_; }
   bool hasAdaptiveTimeStep() const { return !fixedTimeStep_; }
+  real minTimeStep() const { return minTimeStep_; }
+  real maxTimeStep() const { return maxTimeStep_; }
 
   //------------- SET SOLVER SETTINGS ------------------------------------------
 
@@ -57,6 +59,8 @@ class TimeSolver {
   void disableAdaptiveTimeStep() { fixedTimeStep_ = true; }
   void setPostStepFunction(std::function<void()> func) { postStep_ = func; }
   void clearPostStepFunction() { postStep_ = nullptr; }
+  void setMinTimeStep(real dtMin) { minTimeStep_ = dtMin; }
+  void setMaxTimeStep(real dtMax) { maxTimeStep_ = dtMax; }
 
   //------------- EXECUTING THE SOLVER -----------------------------------------
 
@@ -64,12 +68,17 @@ class TimeSolver {
   void steps(unsigned int nsteps);
   void runwhile(std::function<bool(void)>);
   void run(real duration);
-  void postStep() { if (postStep_) return postStep_(); }
+  void postStep() {
+    if (postStep_)
+      return postStep_();
+  }
 
   //------------- HELPER FUNCTIONS FOR ADAPTIVE TIMESTEPPING -------------------
 
   real sensibleTimeStep() const; /** Computes a sensible timestep */
   void adaptTimeStep(real corr);
+  real clampTimeStep(real dt) const;
+  bool atMinTimeStep() const { return timestep_ <= minTimeStep_; }
 
  private:
   //------------- SOLVER SETTINGS ----------------------------------------------
@@ -85,6 +94,8 @@ class TimeSolver {
   bool fixedTimeStep_ = false;
   std::function<void()> postStep_ = nullptr;
   std::vector<DynamicEquation> eqs_;
+  real minTimeStep_ = 1e-16;  // hard-coded for now
+  real maxTimeStep_ = 1e-13;  // hard-coded for now
 
   //------------- THE INTERNAL STEPPER -----------------------------------------
 

@@ -1,12 +1,12 @@
 #include "cudalaunch.hpp"
 #include "derivativestencil.hpp"
 #include "ferromagnet.hpp"
-#include "magnet.hpp"
 #include "field.hpp"
+#include "magnet.hpp"
 #include "magnetoelasticfield.hpp"  // magnetoelasticAssuredZero
 #include "parameter.hpp"
 #include "straintensor.hpp"
-
+#include "traction.hpp"
 
 bool strainTensorAssuredZero(const Magnet* magnet) {
   return !magnet->enableElastodynamics();
@@ -62,13 +62,14 @@ __global__ void k_bulkGradientTensor(CuField grad,
 // is built as f_i = d(sigma_mel)_ij / dx_j with sigma_mel_ii = B1*m_i^2 and
 // sigma_mel_ij = B2*m_i*m_j (i != j) -- i.e. the *positive* stress sigma_mel is
 // what already appears, additively, in the divergence that produces the body
-// force. The interior-interface jump formula in Kernel 3 / directSecondDerivative
-// assumes a flux of the form C*grad(u) + B that is continuous across a face, so
-// the offset here must be B = +sigma_mel_ic (NOT negated). This differs from
-// magnum.np's own internal convention, where the corresponding offset is defined
-// as B = -sigma_m because magnum's flux is built as C*grad(u) - sigma_m; the sign
-// flip here is required to match mumax+'s own (opposite) force-kernel convention,
-// not a discrepancy with magnum.
+// force. The interior-interface jump formula in Kernel 3 /
+// directSecondDerivative assumes a flux of the form C*grad(u) + B that is
+// continuous across a face, so the offset here must be B = +sigma_mel_ic (NOT
+// negated). This differs from magnum.np's own internal convention, where the
+// corresponding offset is defined as B = -sigma_m because magnum's flux is
+// built as C*grad(u) - sigma_m; the sign flip here is required to match
+// mumax+'s own (opposite) force-kernel convention, not a discrepancy with
+// magnum.
 //
 // Output layout (9 components each): faceL/faceR[3*i+c] = +sig_m_ic evaluated
 // at this cell's -i / +i face respectively.
@@ -134,7 +135,7 @@ __global__ void k_faceEigenstrainTraction(CuField faceL,
 // Companion to Kernel 2, but evaluated at the cell center (no face
 // extrapolation) and written directly in 6-component Voigt order, matching
 // the layout k_elasticStress/evalElasticStress already use for the elastic
-// stress tensor: [xx, yy, zz, yz, xz, xy]. Same sign convention as
+// stress tensor: [xx, yy, zz, xy, xz, yz]. Same sign convention as
 // k_faceEigenstrainTraction (see its comment) -- i.e. this is +sigma_mel, not
 // negated.
 __global__ void k_magnetoelasticStressVoigt(CuField sigMel,
@@ -157,12 +158,208 @@ __global__ void k_magnetoelasticStressVoigt(CuField sigMel,
   const real b1 = B1.valueAt(idx);
   const real b2 = B2.valueAt(idx);
 
-  sigMel.setValueInCell(idx, 0, b1 * marr[0] * marr[0]);         // xx
-  sigMel.setValueInCell(idx, 1, b1 * marr[1] * marr[1]);         // yy
-  sigMel.setValueInCell(idx, 2, b1 * marr[2] * marr[2]);         // zz
-  sigMel.setValueInCell(idx, 3, b2 * marr[1] * marr[2]);         // yz
-  sigMel.setValueInCell(idx, 4, b2 * marr[0] * marr[2]);         // xz
-  sigMel.setValueInCell(idx, 5, b2 * marr[0] * marr[1]);         // xy
+  sigMel.setValueInCell(idx, 0, b1 * marr[0] * marr[0]);  // xx
+  sigMel.setValueInCell(idx, 1, b1 * marr[1] * marr[1]);  // yy
+  sigMel.setValueInCell(idx, 2, b1 * marr[2] * marr[2]);  // zz
+  sigMel.setValueInCell(idx, 3, b2 * marr[0] * marr[1]);  // xy
+  sigMel.setValueInCell(idx, 4, b2 * marr[0] * marr[2]);  // xz
+  sigMel.setValueInCell(idx, 5, b2 * marr[1] * marr[2]);  // yz
+}
+
+// ============================================================
+// Path A: magnum.np-style jump conditions with voids as C = 0
+// ============================================================
+
+// Face offsets B = sigma_mel (face-extrapolated) + B_eps, B_eps = Cc *
+// (C-weighted mean of the tangential gradient of the two cells sharing the
+// face). A non-solid neighbour has Cc = 0.
+__global__ void k_buildJumpOffsets(CuField BL,
+                                   CuField BR,
+                                   const CuField sigL,
+                                   const CuField sigR,
+                                   const CuField gu,
+                                   const bool useEps,
+                                   const CuParameter C12,
+                                   const CuParameter C44,
+                                   const Grid mastergrid,
+                                   const int3 thin) {
+  const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  const CuSystem system = BL.system;
+  const Grid grid = system.grid;
+
+  if (!system.inGeometry(idx)) {
+    if (grid.cellInGrid(idx)) {
+      for (int c = 0; c < BL.ncomp; c++) {
+        BL.setValueInCell(idx, c, 0);
+        BR.setValueInCell(idx, c, 0);
+      }
+    }
+    return;
+  }
+
+  const int3 coo = grid.index2coord(idx);
+  const int thinArr[3] = {thin.x, thin.y, thin.z};
+  const int3 step_arr[3] = {int3{1, 0, 0}, int3{0, 1, 0}, int3{0, 0, 1}};
+
+  for (int d = 0; d < 3; d++) {
+    const int3 coo_m = mastergrid.wrap(coo - step_arr[d]);
+    const int3 coo_p = mastergrid.wrap(coo + step_arr[d]);
+    const bool solidM = system.inGeometry(coo_m);
+    const bool solidP = system.inGeometry(coo_p);
+    const int idx_m = solidM ? grid.coord2index(coo_m) : idx;
+    const int idx_p = solidP ? grid.coord2index(coo_p) : idx;
+
+    for (int k = 0; k < 3; k++) {
+      real bl = sigL.valueAt(idx, 3 * d + k);
+      real br = sigR.valueAt(idx, 3 * d + k);
+
+      if (useEps && !thinArr[d]) {
+        const CuParameter& Cc = (k == d) ? C12 : C44;
+        const real Cs = Cc.valueAt(idx);
+        const real gs = tangentialGrad(gu, idx, d, k);
+
+        real ghat = gs;  // +d face
+        if (solidP) {
+          const real Cn = Cc.valueAt(idx_p);
+          const real den = Cs + Cn;
+          if (den > 0)
+            ghat = (Cs * gs + Cn * tangentialGrad(gu, idx_p, d, k)) / den;
+        }
+        br += Cs * ghat;
+
+        ghat = gs;  // -d face
+        if (solidM) {
+          const real Cn = Cc.valueAt(idx_m);
+          const real den = Cs + Cn;
+          if (den > 0)
+            ghat = (Cs * gs + Cn * tangentialGrad(gu, idx_m, d, k)) / den;
+        }
+        bl += Cs * ghat;
+      }
+
+      BL.setValueInCell(idx, 3 * d + k, bl);
+      BR.setValueInCell(idx, 3 * d + k, br);
+    }
+  }
+}
+
+// gu[3*d+k] = 1/2 (fwd + bwd). Solid neighbour: magnum's two-point jump
+// formula. Non-solid neighbour (void or grid edge): C*grad + B = S, with face
+// stress S = sense * traction (S = 0 for a free surface).
+__global__ void k_gradientJump(CuField gu,
+                               const CuField u,
+                               const CuField BL,
+                               const CuField BR,
+                               const CuParameter C11,
+                               const CuParameter C44,
+                               const CuBoundaryTraction traction,
+                               const real3 w,
+                               const Grid mastergrid,
+                               const int3 thin) {
+  const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  const CuSystem system = gu.system;
+  const Grid grid = system.grid;
+
+  if (!system.inGeometry(idx)) {
+    if (grid.cellInGrid(idx)) {
+      for (int c = 0; c < gu.ncomp; c++)
+        gu.setValueInCell(idx, c, 0);
+    }
+    return;
+  }
+
+  const int3 coo = grid.index2coord(idx);
+  const real hs[3] = {1 / w.x, 1 / w.y, 1 / w.z};
+  const int thinArr[3] = {thin.x, thin.y, thin.z};
+  const int3 step_arr[3] = {int3{1, 0, 0}, int3{0, 1, 0}, int3{0, 0, 1}};
+
+  for (int d = 0; d < 3; d++) {
+    if (thinArr[d]) {
+      for (int k = 0; k < 3; k++)
+        gu.setValueInCell(idx, 3 * d + k, 0);
+      continue;
+    }
+
+    const int3 coo_m = mastergrid.wrap(coo - step_arr[d]);
+    const int3 coo_p = mastergrid.wrap(coo + step_arr[d]);
+    const bool solidM = system.inGeometry(coo_m);
+    const bool solidP = system.inGeometry(coo_p);
+    const int idx_m = solidM ? grid.coord2index(coo_m) : idx;
+    const int idx_p = solidP ? grid.coord2index(coo_p) : idx;
+    const real h = hs[d];
+    const real3 tP = traction.getSide(d, 1).vectorAt(idx);
+    const real3 tM = traction.getSide(d, -1).vectorAt(idx);
+
+    for (int k = 0; k < 3; k++) {
+      const CuParameter& Cpar = (k == d) ? C11 : C44;
+      const real C0 = Cpar.valueAt(idx);
+      const real us = u.valueAt(idx, k);
+      const real BRs = BR.valueAt(idx, 3 * d + k);
+      const real BLs = BL.valueAt(idx, 3 * d + k);
+
+      real fwd = 0, bwd = 0;
+      if (solidP) {
+        const real Cn = Cpar.valueAt(idx_p);
+        const real D = C0 + Cn;
+        if (D > 0)
+          fwd = (2 * Cn * (u.valueAt(idx_p, k) - us) +
+                 h * (BL.valueAt(idx_p, 3 * d + k) - BRs)) /
+                (h * D);
+      } else if (C0 > 0) {
+        fwd = (comp3(tP, k) - BRs) / C0;
+      }
+      if (solidM) {
+        const real Cn = Cpar.valueAt(idx_m);
+        const real D = Cn + C0;
+        if (D > 0)
+          bwd = (2 * Cn * (us - u.valueAt(idx_m, k)) -
+                 h * (BLs - BR.valueAt(idx_m, 3 * d + k))) /
+                (h * D);
+      } else if (C0 > 0) {
+        bwd = (-comp3(tM, k) - BLs) / C0;
+      }
+
+      gu.setValueInCell(idx, 3 * d + k, 0.5 * (fwd + bwd));
+    }
+  }
+}
+
+ElasticJumpData evalElasticJumpData(const Magnet* magnet) {
+  const int ncells = magnet->grid().ncells();
+  const real3 w = 1 / magnet->cellsize();
+  const Grid mastergrid = magnet->world()->mastergrid();
+  const int3 thin = thinAxes(magnet->grid(), mastergrid);
+
+  CuField u = magnet->elasticDisplacement()->field().cu();
+  CuParameter C11 = magnet->C11.cu();
+  CuParameter C12 = magnet->C12.cu();
+  CuParameter C44 = magnet->C44.cu();
+  CuBoundaryTraction traction = magnet->boundaryTraction.cu();
+
+  // sigma_mel face values (all zero if there is no magnetoelastic coupling)
+  FaceEigenstrainTraction sig = evalFaceEigenstrainTraction(magnet);
+
+  Field gu(magnet->system(), 9);
+  Field BL(magnet->system(), 9);
+  Field BR(magnet->system(), 9);
+
+  const bool noEps = false, withEps = true;
+
+  // pass 0: offsets = sigma_mel only
+  cudaLaunch(ncells, k_buildJumpOffsets, BL.cu(), BR.cu(), sig.faceL.cu(),
+             sig.faceR.cu(), gu.cu(), noEps, C12, C44, mastergrid, thin);
+  cudaLaunch(ncells, k_gradientJump, gu.cu(), u, BL.cu(), BR.cu(), C11, C44,
+             traction, w, mastergrid, thin);
+
+  // iterations: B_eps from the previous gradient, then a new gradient
+  for (int it = 0; it < ELASTIC_JUMP_DEPTH; it++) {
+    cudaLaunch(ncells, k_buildJumpOffsets, BL.cu(), BR.cu(), sig.faceL.cu(),
+               sig.faceR.cu(), gu.cu(), withEps, C12, C44, mastergrid, thin);
+    cudaLaunch(ncells, k_gradientJump, gu.cu(), u, BL.cu(), BR.cu(), C11, C44,
+               traction, w, mastergrid, thin);
+  }
+
+  return {gu, BL, BR};
 }
 
 // ============================================================
@@ -175,7 +372,8 @@ __global__ void k_magnetoelasticStressVoigt(CuField sigMel,
 // first_derivative_with_jump_conditions (linear_elasticity/utils.py):
 //
 //   at a face between a "near" cell N and "far" cell F (uniform cellsize h_i):
-//     contribution(N->this cell) = [2*C_F*(u_far - u_near) + h*(B_far - B_near)]
+//     contribution(N->this cell) = [2*C_F*(u_far - u_near) + h*(B_far -
+//     B_near)]
 //                                   / (h * (C_near + C_far))
 //
 // with C = Cii (e.g. C11/eta11) when c == i (diagonal / normal strain), or
@@ -284,11 +482,13 @@ __global__ void k_jumpCorrectGradient(CuField gradOut,
 
       if (haveM) {
         contribFromIm1 = (2. * Wim1 * (uSelf[c] - uIm1[c]) +
-                          hs[i] * (Bim1_R[c] - Bself_L[c])) / denomM;
+                          hs[i] * (Bim1_R[c] - Bself_L[c])) /
+                         denomM;
       }
       if (haveP) {
         contribFromIp1 = (2. * Wip1 * (uIp1[c] - uSelf[c]) +
-                          hs[i] * (Bip1_L[c] - Bself_R[c])) / denomP;
+                          hs[i] * (Bip1_L[c] - Bself_R[c])) /
+                         denomP;
       }
 
       // NOTE: contribFromIm1/contribFromIp1 above have units of displacement
@@ -355,8 +555,12 @@ __global__ void k_symmetrizeStrain(CuField strain, const CuField grad) {
 // magnetoelastic eigenstrain traction of one Ferromagnet sublattice into
 // faceL/faceR, mirroring the sublattice-summation pattern used for
 // evalMagnetoelasticForce in elastodynamics.cu's evalEffectiveBodyForce.
-static void accumulateFaceEigenstrain(const Ferromagnet* fm, int ncells, real3 w,
-                                      const Grid& mastergrid, Field& faceL, Field& faceR) {
+static void accumulateFaceEigenstrain(const Ferromagnet* fm,
+                                      int ncells,
+                                      real3 w,
+                                      const Grid& mastergrid,
+                                      Field& faceL,
+                                      Field& faceR) {
   if (magnetoelasticAssuredZero(fm))
     return;
 
@@ -397,7 +601,8 @@ FaceEigenstrainTraction evalFaceEigenstrainTraction(const Magnet* magnet) {
 // one Ferromagnet sublattice into sigMel, mirroring accumulateFaceEigenstrain
 // above and the sublattice-summation pattern used throughout for magnetoelastic
 // quantities.
-static void accumulateMagnetoelasticStress(const Ferromagnet* fm, int ncells,
+static void accumulateMagnetoelasticStress(const Ferromagnet* fm,
+                                           int ncells,
                                            Field& sigMel) {
   if (magnetoelasticAssuredZero(fm))
     return;
@@ -436,8 +641,10 @@ Field evalMagnetoelasticStressVoigt(const Magnet* magnet) {
 //   3. STRAIN_JUMP_ITERATIONS passes of interior-interface jump correction,
 //      weighted by (Cii, Cshear) = (C11,C44) or (eta11,eta44)
 // Returns the corrected 9-component gradient tensor (pre-symmetrization).
-static Field evalGradientLike(const Magnet* magnet, const CuField& f,
-                              const CuParameter& Cii, const CuParameter& Cshear,
+static Field evalGradientLike(const Magnet* magnet,
+                              const CuField& f,
+                              const CuParameter& Cii,
+                              const CuParameter& Cshear,
                               bool includeEigenstrain) {
   int ncells = magnet->grid().ncells();
   real3 w = 1 / magnet->cellsize();
@@ -462,7 +669,8 @@ static Field evalGradientLike(const Magnet* magnet, const CuField& f,
   for (int iter = 0; iter < STRAIN_JUMP_ITERATIONS; iter++) {
     cudaLaunch(ncells, k_jumpCorrectGradient, gradB.cu(), gradA.cu(),
                faceL.cu(), faceR.cu(), f, Cii, Cshear, w, mastergrid);
-    debugFieldStats(gradB.cu(), ncells, "gradB (k_jumpCorrectGradient, after pass)");
+    debugFieldStats(gradB.cu(), ncells,
+                    "gradB (k_jumpCorrectGradient, after pass)");
     std::swap(gradA, gradB);
   }
 
@@ -470,17 +678,12 @@ static Field evalGradientLike(const Magnet* magnet, const CuField& f,
 }
 
 Field evalDisplacementGradientTensor(const Magnet* magnet) {
-  Field grad(magnet->system(), 9);
   if (strainTensorAssuredZero(magnet)) {
+    Field grad(magnet->system(), 9);
     grad.makeZero();
     return grad;
   }
-
-  CuField u = magnet->elasticDisplacement()->field().cu();
-  CuParameter C11 = magnet->C11.cu();
-  CuParameter C44 = magnet->C44.cu();
-
-  return evalGradientLike(magnet, u, C11, C44, /*includeEigenstrain=*/true);
+  return evalElasticJumpData(magnet).gu;
 }
 
 Field evalStrainTensor(const Magnet* magnet) {
@@ -518,8 +721,10 @@ Field evalStrainRate(const Magnet* magnet) {
   debugFieldStats(v, ncellsDbg, "v (elasticVelocity, input to strain rate)");
 
   // no magnetoelastic eigenstrain-rate analogue (magnum.np has none either)
-  Field grad = evalGradientLike(magnet, v, eta11, eta44, /*includeEigenstrain=*/false);
-  debugFieldStats(grad.cu(), ncellsDbg, "gradV (strain-rate gradient, pre-symmetrize)");
+  Field grad =
+      evalGradientLike(magnet, v, eta11, eta44, /*includeEigenstrain=*/false);
+  debugFieldStats(grad.cu(), ncellsDbg,
+                  "gradV (strain-rate gradient, pre-symmetrize)");
   int ncells = strainRate.grid().ncells();
   cudaLaunch(ncells, k_symmetrizeStrain, strainRate.cu(), grad.cu());
   return strainRate;

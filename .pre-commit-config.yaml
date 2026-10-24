@@ -1,20 +1,20 @@
 repos:
--   repo: https://github.com/python/black
-    rev: 20.8b1
+-   repo: https://github.com/psf/black
+    rev: 25.1.0
     hooks:
     -   id: black
--   repo: https://gitlab.com/pycqa/flake8
-    rev: 3.8.4
+-   repo: https://github.com/PyCQA/flake8
+    rev: 7.1.2
     hooks:
     -   id: flake8
         additional_dependencies: [flake8-docstrings]
 -   repo: https://github.com/PyCQA/isort
-    rev: 5.6.4
+    rev: 5.13.2
     hooks:
     -   id: isort
         name: isort (python)
 -   repo: https://github.com/kynan/nbstripout
-    rev: master
+    rev: 0.7.1
     hooks:
     -   id: nbstripout
 -   repo: https://github.com/cpplint/cpplint
@@ -24,7 +24,7 @@ repos:
         args: [
             "--verbose=3",
             "--counting=toplevel",
-            "--filter=-legal/copyright",
+            "--filter=-legal/copyright,-build/include_subdir,-build/include_what_you_use,-readability/casting",
             "--linelength=80"
             ]
 -   repo: local

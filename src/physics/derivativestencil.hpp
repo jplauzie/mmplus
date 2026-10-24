@@ -4,8 +4,8 @@
 #include <cstdlib>
 #include <vector>
 
-#include "grid.hpp"
 #include "field.hpp"
+#include "grid.hpp"
 
 // ============================================================
 // Debug diagnostics (always compiled in, gated at runtime)
@@ -28,9 +28,11 @@
 // it is safe to leave the call sites in place; set MUMAX_DEBUG_FIELDS=1 to
 // enable the prints for a debugging run.
 
-__global__ static void k_debugFieldStats(const CuField field, real* outMaxAbs,
-                                  int* outNumNonfinite, int* outNumNonzero,
-                                  int* outNumInGeometry) {
+__global__ static void k_debugFieldStats(const CuField field,
+                                         real* outMaxAbs,
+                                         int* outNumNonfinite,
+                                         int* outNumNonzero,
+                                         int* outNumInGeometry) {
   const int idx = blockIdx.x * blockDim.x + threadIdx.x;
   const CuSystem system = field.system;
   if (!system.grid.cellInGrid(idx))
@@ -57,13 +59,16 @@ __global__ static void k_debugFieldStats(const CuField field, real* outMaxAbs,
     do {
       assumed = old;
       float oldf = __uint_as_float(assumed);
-      if (avf <= oldf) break;
+      if (avf <= oldf)
+        break;
       old = atomicCAS(addr, assumed, __float_as_uint(avf));
     } while (assumed != old);
   }
 }
 
-inline void debugFieldStats(const CuField& field, int ncells, const char* label) {
+inline void debugFieldStats(const CuField& field,
+                            int ncells,
+                            const char* label) {
   static const bool enabled = std::getenv("MUMAX_DEBUG_FIELDS") != nullptr;
   if (!enabled)
     return;
@@ -92,13 +97,17 @@ inline void debugFieldStats(const CuField& field, int ncells, const char* label)
   real maxAbs;
   int numNonfinite, numNonzero, numInGeometry;
   cudaMemcpy(&maxAbs, d_maxAbs, sizeof(real), cudaMemcpyDeviceToHost);
-  cudaMemcpy(&numNonfinite, d_numNonfinite, sizeof(int), cudaMemcpyDeviceToHost);
+  cudaMemcpy(&numNonfinite, d_numNonfinite, sizeof(int),
+             cudaMemcpyDeviceToHost);
   cudaMemcpy(&numNonzero, d_numNonzero, sizeof(int), cudaMemcpyDeviceToHost);
-  cudaMemcpy(&numInGeometry, d_numInGeometry, sizeof(int), cudaMemcpyDeviceToHost);
+  cudaMemcpy(&numInGeometry, d_numInGeometry, sizeof(int),
+             cudaMemcpyDeviceToHost);
 
-  fprintf(stderr,
-          "[debug] %-40s ncomp=%d inGeom=%d nonzero=%d nonfinite=%d maxAbs=%g\n",
-          label, field.ncomp, numInGeometry, numNonzero, numNonfinite, (double)maxAbs);
+  fprintf(
+      stderr,
+      "[debug] %-40s ncomp=%d inGeom=%d nonzero=%d nonfinite=%d maxAbs=%g\n",
+      label, field.ncomp, numInGeometry, numNonzero, numNonfinite,
+      (double)maxAbs);
   fflush(stderr);
 
   cudaFree(d_maxAbs);
@@ -147,18 +156,19 @@ inline void debugFieldSum(const Field& field, const char* label) {
   fflush(stderr);
 }
 
-// Computes the full gradient tensor (∂f_c/∂x_i) of a 3-component field `f` at cell `idx`
-// (grid coordinate `coo`), using the same adaptive one-sided/central finite-difference
-// stencil previously duplicated between k_strainTensor (straintensor.cu) and
-// k_magnetoelasticForce (magnetoelasticforce.cu).
+// Computes the full gradient tensor (∂f_c/∂x_i) of a 3-component field `f` at
+// cell `idx` (grid coordinate `coo`), using the same adaptive one-sided/central
+// finite-difference stencil previously duplicated between k_strainTensor
+// (straintensor.cu) and k_magnetoelasticForce (magnetoelasticforce.cu).
 //
 // Result convention:
 //   grad[i][c] = d f_c / d x_i
 //     i = 0,1,2  -> differentiation direction (x,y,z)
 //     c = 0,1,2  -> vector component of f being differentiated
 //
-// Caller must guarantee `system.inGeometry(idx)` is true; boundary/outside-geometry
-// handling is left to the caller (as in the original kernels).
+// Caller must guarantee `system.inGeometry(idx)` is true;
+// boundary/outside-geometry handling is left to the caller (as in the original
+// kernels).
 __device__ inline void deviceGradientTensor(real grad[3][3],
                                             const CuField& f,
                                             const CuSystem& system,
@@ -168,8 +178,8 @@ __device__ inline void deviceGradientTensor(real grad[3][3],
   const real ws[3] = {w.x, w.y, w.z};
   const int3 im2_arr[3] = {int3{-2, 0, 0}, int3{0, -2, 0}, int3{0, 0, -2}};
   const int3 im1_arr[3] = {int3{-1, 0, 0}, int3{0, -1, 0}, int3{0, 0, -1}};
-  const int3 ip1_arr[3] = {int3{ 1, 0, 0}, int3{0,  1, 0}, int3{0, 0,  1}};
-  const int3 ip2_arr[3] = {int3{ 2, 0, 0}, int3{0,  2, 0}, int3{0, 0,  2}};
+  const int3 ip1_arr[3] = {int3{1, 0, 0}, int3{0, 1, 0}, int3{0, 0, 1}};
+  const int3 ip2_arr[3] = {int3{2, 0, 0}, int3{0, 2, 0}, int3{0, 0, 2}};
 
   const real3 f_0 = f.vectorAt(coo);
 
@@ -186,7 +196,7 @@ __device__ inline void deviceGradientTensor(real grad[3][3],
       // --1-- zero
       dfdi = real3{0, 0, 0};
     } else if ((!system.inGeometry(coo_im2) || !system.inGeometry(coo_ip2)) &&
-                system.inGeometry(coo_im1) && system.inGeometry(coo_ip1)) {
+               system.inGeometry(coo_im1) && system.inGeometry(coo_ip1)) {
       // -111-, 1111-, -1111 central difference, ε ~ h^2
       dfdi = 0.5 * (f.vectorAt(coo_ip1) - f.vectorAt(coo_im1));
     } else if (!system.inGeometry(coo_im2) && !system.inGeometry(coo_ip1)) {
@@ -197,10 +207,12 @@ __device__ inline void deviceGradientTensor(real grad[3][3],
       dfdi = (-f_0 + f.vectorAt(coo_ip1));
     } else if (system.inGeometry(coo_im2) && !system.inGeometry(coo_ip1)) {
       // 111-- backward difference, ε ~ h^2
-      dfdi = (0.5 * f.vectorAt(coo_im2) - 2.0 * f.vectorAt(coo_im1) + 1.5 * f_0);
+      dfdi =
+          (0.5 * f.vectorAt(coo_im2) - 2.0 * f.vectorAt(coo_im1) + 1.5 * f_0);
     } else if (!system.inGeometry(coo_im1) && system.inGeometry(coo_ip1)) {
       // --111 forward difference, ε ~ h^2
-      dfdi = (-0.5 * f.vectorAt(coo_ip2) + 2.0 * f.vectorAt(coo_ip1) - 1.5 * f_0);
+      dfdi =
+          (-0.5 * f.vectorAt(coo_ip2) + 2.0 * f.vectorAt(coo_ip1) - 1.5 * f_0);
     } else {
       // 11111 central difference, ε ~ h^4
       dfdi = ((2.0 / 3.0) * (f.vectorAt(coo_ip1) - f.vectorAt(coo_im1)) +
@@ -214,14 +226,16 @@ __device__ inline void deviceGradientTensor(real grad[3][3],
   }
 }
 
-// True if both the -i and +i neighbors of `coo` (wrapped through mastergrid) are inside
-// the geometry, i.e. this cell is not adjacent to the outer geometry/vacuum boundary in
-// direction i. Interior material-interface (stiffness-jump) corrections are only ever
-// applied where this holds; at the true outer boundary the one-sided stencils already
-// computed by deviceGradientTensor are left untouched.
+// True if both the -i and +i neighbors of `coo` (wrapped through mastergrid)
+// are inside the geometry, i.e. this cell is not adjacent to the outer
+// geometry/vacuum boundary in direction i. Interior material-interface
+// (stiffness-jump) corrections are only ever applied where this holds; at the
+// true outer boundary the one-sided stencils already computed by
+// deviceGradientTensor are left untouched.
 __device__ inline bool interiorInDirection(const CuSystem& system,
                                            const Grid& mastergrid,
-                                           int3 coo, int dir) {
+                                           int3 coo,
+                                           int dir) {
   const int3 step_arr[3] = {int3{1, 0, 0}, int3{0, 1, 0}, int3{0, 0, 1}};
   int3 coo_im1 = mastergrid.wrap(coo - step_arr[dir]);
   int3 coo_ip1 = mastergrid.wrap(coo + step_arr[dir]);
@@ -232,13 +246,42 @@ __device__ inline int3 gradRowComps(int i) {
   return int3{3 * i, 3 * i + 1, 3 * i + 2};
 }
 
+// Axes with a single cell and no periodicity are "thin": d/dx_i == 0 there
+// (plane strain), and no free-surface/jump conditions are applied along them.
+inline int3 thinAxes(const Grid& g, const Grid& mastergrid) {
+  const int3 n = g.size();
+  const int3 nm = mastergrid.size();
+  return int3{(n.x == 1 && nm.x <= 1) ? 1 : 0, (n.y == 1 && nm.y <= 1) ? 1 : 0,
+              (n.z == 1 && nm.z <= 1) ? 1 : 0};
+}
+
+__device__ inline real comp3(const real3& v, int c) {
+  return (c == 0) ? v.x : (c == 1) ? v.y : v.z;
+}
+
+// Tangential gradient entering B_eps for (component k, direction d).
+// gu layout: gu[3*dir + comp] = d_dir u_comp.
+__device__ inline real tangentialGrad(const CuField& gu,
+                                      int idx,
+                                      int d,
+                                      int k) {
+  if (k == d) {
+    real s = 0;
+    for (int e = 0; e < 3; e++)
+      if (e != d)
+        s += gu.valueAt(idx, 3 * e + e);
+    return s;
+  }
+  return gu.valueAt(idx, 3 * k + d);
+}
+
 // ============================================================
 // Direct jump-aware derivative primitives
 // ============================================================
 //
 // These two functions are the CUDA translation of magnum.np's
-// linear_elasticity/utils.py `first_derivative_with_jump_conditions` (used, with
-// zero B, inside `_mixed_derivative`) and llg_with_le_solver.py's
+// linear_elasticity/utils.py `first_derivative_with_jump_conditions` (used,
+// with zero B, inside `_mixed_derivative`) and llg_with_le_solver.py's
 // `_2nd_derivative_homogeneous_Neumann` (used inside `_2nd_derivative`), both
 // specialized to a uniform grid spacing h (mumax's cellsize is uniform per
 // direction, unlike magnum's general non-uniform mesh).
@@ -254,11 +297,12 @@ __device__ inline int3 gradRowComps(int i) {
 // A single shared per-face helper underlies both: at a face between `self` and
 // a `neighbor` cell (uniform spacing h), with B_left/B_right the two cells' own
 // outward-facing eigenstrain offsets at that specific face (B_left belonging to
-// whichever of the two cells has the lower grid coordinate on this axis, B_right
-// to the higher one -- NOT "self" vs "neighbor"; this asymmetric-looking
-// left/right labeling is what makes the im1-face and ip1-face contributions add
-// up correctly, and was confirmed by direct symbolic verification against
-// magnum's own construction rather than assumed by symmetry):
+// whichever of the two cells has the lower grid coordinate on this axis,
+// B_right to the higher one -- NOT "self" vs "neighbor"; this
+// asymmetric-looking left/right labeling is what makes the im1-face and
+// ip1-face contributions add up correctly, and was confirmed by direct symbolic
+// verification against magnum's own construction rather than assumed by
+// symmetry):
 //   contrib(self,neighbor) = C_self*[2*C_neighbor*(u_neighbor-u_self)
 //                                     + h*(B_right - B_left)]
 //                             / (h^2 * (C_self+C_neighbor))
@@ -269,13 +313,18 @@ __device__ inline int3 gradRowComps(int i) {
 // uniform-coefficient, zero-B limit, and (b) reduce to the classic
 // conservative harmonic-mean flux-difference scheme in the coefficient-jump,
 // zero-B limit.
-__device__ inline real secondDerivFaceTerm(real C_self, real C_neighbor,
-                                           real u_self, real u_neighbor,
-                                           real B_left, real B_right,
+__device__ inline real secondDerivFaceTerm(real C_self,
+                                           real C_neighbor,
+                                           real u_self,
+                                           real u_neighbor,
+                                           real B_left,
+                                           real B_right,
                                            real h) {
   real denom = C_self + C_neighbor;
-  if (denom <= 0) return 0;  // no coupling on this face; caller should fall back
-  return C_self * (2 * C_neighbor * (u_neighbor - u_self) + h * (B_right - B_left)) /
+  if (denom <= 0)
+    return 0;  // no coupling on this face; caller should fall back
+  return C_self *
+         (2 * C_neighbor * (u_neighbor - u_self) + h * (B_right - B_left)) /
          (h * h * denom);
 }
 
@@ -287,17 +336,25 @@ __device__ inline real secondDerivFaceTerm(real C_self, real C_neighbor,
 // k_faceEigenstrainTraction), `Bim1_R`/`Bip1_L` the corresponding neighbor
 // cells' own outward-facing values at the two shared faces. Matches magnum's
 // _2nd_derivative_homogeneous_Neumann (ij_C = [i,i]).
-__device__ inline real directSecondDerivative(real u_self, real u_im1, real u_ip1,
-                                              real C_self, real C_im1, real C_ip1,
-                                              real Bself_L, real Bself_R,
-                                              real Bim1_R, real Bip1_L,
+__device__ inline real directSecondDerivative(real u_self,
+                                              real u_im1,
+                                              real u_ip1,
+                                              real C_self,
+                                              real C_im1,
+                                              real C_ip1,
+                                              real Bself_L,
+                                              real Bself_R,
+                                              real Bim1_R,
+                                              real Bip1_L,
                                               real h) {
-  // im1 face: self is the "right" cell of the pair -> B_left=Bim1_R, B_right=Bself_L
-  real contribM = secondDerivFaceTerm(C_self, C_im1, u_self, u_im1,
-                                      Bim1_R, Bself_L, h);
-  // ip1 face: self is the "left" cell of the pair -> B_left=Bself_R, B_right=Bip1_L
-  real contribP = secondDerivFaceTerm(C_self, C_ip1, u_self, u_ip1,
-                                      Bself_R, Bip1_L, h);
+  // im1 face: self is the "right" cell of the pair -> B_left=Bim1_R,
+  // B_right=Bself_L
+  real contribM =
+      secondDerivFaceTerm(C_self, C_im1, u_self, u_im1, Bim1_R, Bself_L, h);
+  // ip1 face: self is the "left" cell of the pair -> B_left=Bself_R,
+  // B_right=Bip1_L
+  real contribP =
+      secondDerivFaceTerm(C_self, C_ip1, u_self, u_ip1, Bself_R, Bip1_L, h);
   return contribM + contribP;
 }
 
@@ -309,15 +366,20 @@ __device__ inline real directSecondDerivative(real u_self, real u_im1, real u_ip
 // SAME two-point jump formula as directSecondDerivative/Kernel 3, applied as a
 // first derivative of the flux F = C*g, not a second derivative of g itself.
 //
-// contrib(self,neighbor) = 2*C_neighbor*(F_neighbor - F_self) / (h*(C_self+C_neighbor))
-// with F = C*g, and the final derivative the average of the two face
-// contributions (mirrors k_jumpCorrectGradient's weighting, but with B == 0).
-__device__ inline real directMixedDerivative(real g_self, real g_im1, real g_ip1,
-                                             real C_self, real C_im1, real C_ip1,
+// contrib(self,neighbor) = 2*C_neighbor*(F_neighbor - F_self) /
+// (h*(C_self+C_neighbor)) with F = C*g, and the final derivative the average of
+// the two face contributions (mirrors k_jumpCorrectGradient's weighting, but
+// with B == 0).
+__device__ inline real directMixedDerivative(real g_self,
+                                             real g_im1,
+                                             real g_ip1,
+                                             real C_self,
+                                             real C_im1,
+                                             real C_ip1,
                                              real h) {
   const real F_self = C_self * g_self;
-  const real F_im1  = C_im1  * g_im1;
-  const real F_ip1  = C_ip1  * g_ip1;
+  const real F_im1 = C_im1 * g_im1;
+  const real F_ip1 = C_ip1 * g_ip1;
 
   const real denM = C_self + C_im1;
   const real denP = C_self + C_ip1;
@@ -327,8 +389,11 @@ __device__ inline real directMixedDerivative(real g_self, real g_im1, real g_ip1
   const real fromM = haveM ? 2 * C_im1 * (F_self - F_im1) / (h * denM) : 0;
   const real fromP = haveP ? 2 * C_ip1 * (F_ip1 - F_self) / (h * denP) : 0;
 
-  if (haveM && haveP) return 0.5 * (fromM + fromP);
-  if (haveM) return fromM;
-  if (haveP) return fromP;
+  if (haveM && haveP)
+    return 0.5 * (fromM + fromP);
+  if (haveM)
+    return fromM;
+  if (haveP)
+    return fromP;
   return 0;  // both faces have zero weight; no coupling to correct
 }

@@ -1,17 +1,16 @@
+#include "cudalaunch.hpp"
 #include "derivativestencil.hpp"
 #include "elastodynamics.hpp"
-#include "internalbodyforce.hpp"
-#include "cudalaunch.hpp"
-#include "magnet.hpp"
 #include "field.hpp"
+#include "internalbodyforce.hpp"
+#include "magnet.hpp"
 #include "parameter.hpp"
 #include "straintensor.hpp"
 #include "stresstensor.hpp"
 #include "traction.hpp"
 
-
 __device__ int tensorComp(int row, int col) {
-  return (row == col) ? row : row+col+2;
+  return (row == col) ? row : row + col + 2;
 }
 
 __device__ int3 tensorRowComps(int row) {
@@ -48,8 +47,9 @@ __device__ int3 tensorRowComps(int row) {
 // (directSecondDerivative) and carry the magnetoelastic eigenstrain jump
 // offset -- for a term differentiated in direction `d` of component `u_c`,
 // magnum's _2nd_derivative_homogeneous_Neumann reads its B offset from
-// diff_data._Bl/Br_jump_conditions[c][d], i.e. indexed by (component, direction)
-// with the *direction* selecting which row of the eigenstrain traction to use
+// diff_data._Bl/Br_jump_conditions[c][d], i.e. indexed by (component,
+// direction) with the *direction* selecting which row of the eigenstrain
+// traction to use
 // -- NOT necessarily the same as the term's own physical direction p.
 // Concretely: the diagonal term uses row p, component p; each C44-"self" term
 // at differentiation direction j uses row j, component p (not row p). This was
@@ -61,16 +61,18 @@ __device__ int3 tensorRowComps(int row) {
 // (directMixedDerivative) of an already-computed (jump-corrected) companion
 // gradient component, and carry NO eigenstrain offset, matching magnum's
 // _mixed_derivative (which passes no B to its internal gradient_with_pbc call).
-__global__ void k_elasticForceDirect(CuField fField,
-                                     const CuField u,
-                                     const CuField gradU,  // 9-comp, jump-corrected (from evalDisplacementGradientTensor)
-                                     const CuField sigmaFaceL,  // 9-comp, eigenstrain
-                                     const CuField sigmaFaceR,
-                                     const CuParameter C11,
-                                     const CuParameter C12,
-                                     const CuParameter C44,
-                                     const real3 w,
-                                     const Grid mastergrid) {
+__global__ void k_elasticForceDirect(
+    CuField fField,
+    const CuField u,
+    const CuField
+        gradU,  // 9-comp, jump-corrected (from evalDisplacementGradientTensor)
+    const CuField sigmaFaceL,  // 9-comp, eigenstrain
+    const CuField sigmaFaceR,
+    const CuParameter C11,
+    const CuParameter C12,
+    const CuParameter C44,
+    const real3 w,
+    const Grid mastergrid) {
   const int idx = blockIdx.x * blockDim.x + threadIdx.x;
   const CuSystem system = fField.system;
   const Grid grid = system.grid;
@@ -123,10 +125,11 @@ __global__ void k_elasticForceDirect(CuField fField,
       real BppLarr[3] = {BppL3.x, BppL3.y, BppL3.z};
 
       f[p] += directSecondDerivative(u_self, u_pm, u_pp, C_self, C_pm, C_pp,
-                                     BselfLarr[p], BselfRarr[p],
-                                     BpmRarr[p], BppLarr[p], hs[p]);
+                                     BselfLarr[p], BselfRarr[p], BpmRarr[p],
+                                     BppLarr[p], hs[p]);
 
-      // ---- C12 cross terms: d/dp( C12 * d(u_j)/dj ), d/dp( C12 * d(u_k)/dk ) ----
+      // ---- C12 cross terms: d/dp( C12 * d(u_j)/dj ), d/dp( C12 * d(u_k)/dk )
+      // ----
       real g_j_self = gradU.valueAt(idx, 3 * j + j);
       real g_j_pm = gradU.valueAt(idx_pm, 3 * j + j);
       real g_j_pp = gradU.valueAt(idx_pp, 3 * j + j);
@@ -138,10 +141,10 @@ __global__ void k_elasticForceDirect(CuField fField,
       real C12_pm = C12.valueAt(idx_pm);
       real C12_pp = C12.valueAt(idx_pp);
 
-      f[p] += directMixedDerivative(g_j_self, g_j_pm, g_j_pp,
-                                    C12_self, C12_pm, C12_pp, hs[p]);
-      f[p] += directMixedDerivative(g_k_self, g_k_pm, g_k_pp,
-                                    C12_self, C12_pm, C12_pp, hs[p]);
+      f[p] += directMixedDerivative(g_j_self, g_j_pm, g_j_pp, C12_self, C12_pm,
+                                    C12_pp, hs[p]);
+      f[p] += directMixedDerivative(g_k_self, g_k_pm, g_k_pp, C12_self, C12_pm,
+                                    C12_pp, hs[p]);
     }
 
     // ---- C44 "self" term: d/dj( C44 * d(u_p)/dj ) ----
@@ -170,15 +173,16 @@ __global__ void k_elasticForceDirect(CuField fField,
       real BjpLarr[3] = {BjpL3.x, BjpL3.y, BjpL3.z};
 
       f[p] += directSecondDerivative(u_self, u_jm, u_jp, C_self, C_jm, C_jp,
-                                     BselfLarr[p], BselfRarr[p],
-                                     BjmRarr[p], BjpLarr[p], hs[j]);
+                                     BselfLarr[p], BselfRarr[p], BjmRarr[p],
+                                     BjpLarr[p], hs[j]);
 
       // ---- C44 "cross" term: d/dj( C44 * d(u_j)/dp ) ----
-      real g_self = gradU.valueAt(idx, 3 * p + j);   // d(u_j)/dp at self
+      real g_self = gradU.valueAt(idx, 3 * p + j);  // d(u_j)/dp at self
       real g_jm = gradU.valueAt(idx_jm, 3 * p + j);
       real g_jp = gradU.valueAt(idx_jp, 3 * p + j);
 
-      f[p] += directMixedDerivative(g_self, g_jm, g_jp, C_self, C_jm, C_jp, hs[j]);
+      f[p] +=
+          directMixedDerivative(g_self, g_jm, g_jp, C_self, C_jm, C_jp, hs[j]);
     }
 
     // ---- C44 "self" term: d/dk( C44 * d(u_p)/dk ) ----
@@ -206,15 +210,16 @@ __global__ void k_elasticForceDirect(CuField fField,
       real BkpLarr[3] = {BkpL3.x, BkpL3.y, BkpL3.z};
 
       f[p] += directSecondDerivative(u_self, u_km, u_kp, C_self, C_km, C_kp,
-                                     BselfLarr[p], BselfRarr[p],
-                                     BkmRarr[p], BkpLarr[p], hs[k]);
+                                     BselfLarr[p], BselfRarr[p], BkmRarr[p],
+                                     BkpLarr[p], hs[k]);
 
       // ---- C44 "cross" term: d/dk( C44 * d(u_k)/dp ) ----
-      real g_self = gradU.valueAt(idx, 3 * p + k);   // d(u_k)/dp at self
+      real g_self = gradU.valueAt(idx, 3 * p + k);  // d(u_k)/dp at self
       real g_km = gradU.valueAt(idx_km, 3 * p + k);
       real g_kp = gradU.valueAt(idx_kp, 3 * p + k);
 
-      f[p] += directMixedDerivative(g_self, g_km, g_kp, C_self, C_km, C_kp, hs[k]);
+      f[p] +=
+          directMixedDerivative(g_self, g_km, g_kp, C_self, C_km, C_kp, hs[k]);
     }
   }
 
@@ -234,7 +239,7 @@ __global__ void k_elasticForceDirect(CuField fField,
  * launched for the same evaluation -- otherwise the boundary traction would be
  * added twice (once here, once there) at cells adjacent to the outer geometry
  * boundary. See evalInternalBodyForce for how this is decided.
-*/
+ */
 __global__ void k_viscousBodyForce(CuField fField,
                                    const CuField stressTensor,
                                    const CuBoundaryTraction traction,
@@ -254,10 +259,10 @@ __global__ void k_viscousBodyForce(CuField fField,
 
   const real tf = includeTraction ? real(1) : real(0);
   const real ws[3] = {w.x, w.y, w.z};
-  const int3 im2_arr[3] = {int3{-2, 0, 0}, int3{0,-2, 0}, int3{0, 0,-2}};
-  const int3 im1_arr[3] = {int3{-1, 0, 0}, int3{0,-1, 0}, int3{0, 0,-1}};
-  const int3 ip1_arr[3] = {int3{ 1, 0, 0}, int3{0, 1, 0}, int3{0, 0, 1}};
-  const int3 ip2_arr[3] = {int3{ 2, 0, 0}, int3{0, 2, 0}, int3{0, 0, 2}};
+  const int3 im2_arr[3] = {int3{-2, 0, 0}, int3{0, -2, 0}, int3{0, 0, -2}};
+  const int3 im1_arr[3] = {int3{-1, 0, 0}, int3{0, -1, 0}, int3{0, 0, -1}};
+  const int3 ip1_arr[3] = {int3{1, 0, 0}, int3{0, 1, 0}, int3{0, 0, 1}};
+  const int3 ip2_arr[3] = {int3{2, 0, 0}, int3{0, 2, 0}, int3{0, 0, 2}};
   const int3 coo = grid.index2coord(idx);
 
   real3 f = {0, 0, 0};
@@ -278,28 +283,26 @@ __global__ void k_viscousBodyForce(CuField fField,
     bool ip2_inGeo = system.inGeometry(coo_ip2);
 
     if (!im1_inGeo && !ip1_inGeo) {
-      f += ws[i] * tf * (traction.getSide(i, 1).vectorAt(idx)
-                    + traction.getSide(i, -1).vectorAt(idx));
+      f += ws[i] * tf *
+           (traction.getSide(i, 1).vectorAt(idx) +
+            traction.getSide(i, -1).vectorAt(idx));
     } else if (!im1_inGeo) {
-      f += ws[i] * (
-        4./3. * tf * traction.getSide(i, -1).vectorAt(idx)
-        + stressTensor.vectorAt(idx, stressRow)
-        + 1./3. * stressTensor.vectorAt(coo_ip1, stressRow)
-      );
+      f += ws[i] * (4. / 3. * tf * traction.getSide(i, -1).vectorAt(idx) +
+                    stressTensor.vectorAt(idx, stressRow) +
+                    1. / 3. * stressTensor.vectorAt(coo_ip1, stressRow));
     } else if (!ip1_inGeo) {
-      f += ws[i] * (
-        - 1./3. * stressTensor.vectorAt(coo_im1, stressRow)
-        - stressTensor.vectorAt(idx, stressRow)
-        + 4./3. * tf * traction.getSide(i, 1).vectorAt(idx)
-      );
+      f += ws[i] * (-1. / 3. * stressTensor.vectorAt(coo_im1, stressRow) -
+                    stressTensor.vectorAt(idx, stressRow) +
+                    4. / 3. * tf * traction.getSide(i, 1).vectorAt(idx));
     } else if (!im2_inGeo || !ip2_inGeo) {
-      f += 0.5*ws[i] * (stressTensor.vectorAt(coo_ip1, stressRow) -
-                        stressTensor.vectorAt(coo_im1, stressRow));
+      f += 0.5 * ws[i] *
+           (stressTensor.vectorAt(coo_ip1, stressRow) -
+            stressTensor.vectorAt(coo_im1, stressRow));
     } else {
-      f += ws[i] * ((4./6.) * (stressTensor.vectorAt(coo_ip1, stressRow) -
-                               stressTensor.vectorAt(coo_im1, stressRow)) +
-                    (1./12.)* (stressTensor.vectorAt(coo_im2, stressRow) -
-                               stressTensor.vectorAt(coo_ip2, stressRow)));
+      f += ws[i] * ((4. / 6.) * (stressTensor.vectorAt(coo_ip1, stressRow) -
+                                 stressTensor.vectorAt(coo_im1, stressRow)) +
+                    (1. / 12.) * (stressTensor.vectorAt(coo_im2, stressRow) -
+                                  stressTensor.vectorAt(coo_ip2, stressRow)));
     }
   }
 
@@ -313,8 +316,9 @@ __global__ void k_viscousBodyForce(CuField fField,
 // Direct port of magnum.np's dpd() free-surface boundary block combined with
 // _update_neumann_bcs's natural (zero-traction, or user-set boundaryTraction)
 // Neumann-plane construction, specialized to the boundary_nodes=1 /
-// non-second-order branch (see the "still open" notes below evalInternalBodyForce
-// for what boundary_nodes=2,3 would additionally require -- NOT yet ported).
+// non-second-order branch (see the "still open" notes below
+// evalInternalBodyForce for what boundary_nodes=2,3 would additionally require
+// -- NOT yet ported).
 //
 // For each of the 3 directions i, if a cell is adjacent to the outer geometry
 // boundary in direction i (interiorInDirection(...)==false for that i -- the
@@ -347,9 +351,10 @@ __global__ void k_viscousBodyForce(CuField fField,
 // geometry (very common on this ring geometry) where two different directions
 // i can both be non-interior at the same cell. This kernel accumulates a
 // per-component sum and a per-component count, then divides at the end,
-// exactly mirroring magnum's `f_ij[bc_mask] = ft[bc_mask] / ft_weigth[bc_mask]`.
-// The old kernel's implicit "just sum both directions" behavior was WRONG at
-// any such corner cell (double-counts rather than averages); this is fixed.
+// exactly mirroring magnum's `f_ij[bc_mask] = ft[bc_mask] /
+// ft_weigth[bc_mask]`. The old kernel's implicit "just sum both directions"
+// behavior was WRONG at any such corner cell (double-counts rather than
+// averages); this is fixed.
 //
 // Because k_elasticForceDirect only ever adds contributions for (component p,
 // direction) pairs where interiorInDirection is true, and this kernel only
@@ -363,11 +368,13 @@ __global__ void k_viscousBodyForce(CuField fField,
 // k_viscousBodyForce's OWN traction application must stay disabled whenever
 // this kernel also runs (see evalInternalBodyForce's includeTraction logic),
 // to avoid applying the same boundary traction twice.
-__global__ void k_elasticBoundaryTraction(CuField fField,
-                                          const CuField stressTensor,  // 6-comp Voigt, ELASTIC-ONLY
-                                          const CuBoundaryTraction traction,
-                                          const real3 w,
-                                          const Grid mastergrid) {
+__global__ void k_elasticBoundaryTraction(
+    CuField fField,
+    const CuField stressTensor,  // 6-comp Voigt, ELASTIC-ONLY
+    const CuBoundaryTraction traction,
+    const real3 w,
+    const Grid mastergrid,
+    const int3 thin) {
   const int idx = blockIdx.x * blockDim.x + threadIdx.x;
   const CuSystem system = fField.system;
   const Grid grid = system.grid;
@@ -380,8 +387,8 @@ __global__ void k_elasticBoundaryTraction(CuField fField,
   }
 
   const real hs[3] = {1 / w.x, 1 / w.y, 1 / w.z};
-  const int3 im1_arr[3] = {int3{-1, 0, 0}, int3{0,-1, 0}, int3{0, 0,-1}};
-  const int3 ip1_arr[3] = {int3{ 1, 0, 0}, int3{0, 1, 0}, int3{0, 0, 1}};
+  const int3 im1_arr[3] = {int3{-1, 0, 0}, int3{0, -1, 0}, int3{0, 0, -1}};
+  const int3 ip1_arr[3] = {int3{1, 0, 0}, int3{0, 1, 0}, int3{0, 0, 1}};
   const int3 coo = grid.index2coord(idx);
 
   real fSum[3] = {0, 0, 0};
@@ -429,6 +436,109 @@ __global__ void k_elasticBoundaryTraction(CuField fField,
   fField.setVectorInCell(idx, f);
 }
 
+__device__ inline real mixedTerm(const CuField& gu,
+                                 int gcomp,
+                                 const CuParameter& C,
+                                 int idx,
+                                 bool solidM,
+                                 int idx_m,
+                                 bool solidP,
+                                 int idx_p,
+                                 real h) {
+  return directMixedDerivative(
+      gu.valueAt(idx, gcomp), solidM ? gu.valueAt(idx_m, gcomp) : real(0),
+      solidP ? gu.valueAt(idx_p, gcomp) : real(0), C.valueAt(idx),
+      solidM ? C.valueAt(idx_m) : real(0), solidP ? C.valueAt(idx_p) : real(0),
+      h);
+}
+
+// Elastic force, magnum.np structure: for each direction d and component a,
+//   own-side flux difference S2 (C = C11 if a == d else C44, offsets B[d][a]) +
+//   mixed derivative d_d( C12 * gu[e][e] ) summed over e != d  (a == d), or
+//                    d_d( C44 * d_a u_d )                      (a != d).
+// Non-solid neighbours have C = 0 and their "offset" is the face stress S =
+// sense * traction.
+__global__ void k_elasticForceMagnum(CuField fField,
+                                     const CuField u,
+                                     const CuField gu,
+                                     const CuField BL,
+                                     const CuField BR,
+                                     const CuParameter C11,
+                                     const CuParameter C12,
+                                     const CuParameter C44,
+                                     const CuBoundaryTraction traction,
+                                     const real3 w,
+                                     const Grid mastergrid,
+                                     const int3 thin) {
+  const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  const CuSystem system = fField.system;
+  const Grid grid = system.grid;
+
+  if (!system.inGeometry(idx)) {
+    if (grid.cellInGrid(idx))
+      fField.setVectorInCell(idx, real3{0, 0, 0});
+    return;
+  }
+
+  const int3 coo = grid.index2coord(idx);
+  const real hs[3] = {1 / w.x, 1 / w.y, 1 / w.z};
+  const int thinArr[3] = {thin.x, thin.y, thin.z};
+  const int3 step_arr[3] = {int3{1, 0, 0}, int3{0, 1, 0}, int3{0, 0, 1}};
+
+  real f[3] = {0, 0, 0};
+
+  for (int d = 0; d < 3; d++) {
+    if (thinArr[d])
+      continue;
+
+    const int3 coo_m = mastergrid.wrap(coo - step_arr[d]);
+    const int3 coo_p = mastergrid.wrap(coo + step_arr[d]);
+    const bool solidM = system.inGeometry(coo_m);
+    const bool solidP = system.inGeometry(coo_p);
+    const int idx_m = solidM ? grid.coord2index(coo_m) : idx;
+    const int idx_p = solidP ? grid.coord2index(coo_p) : idx;
+    const real h = hs[d];
+    const real3 tP = traction.getSide(d, 1).vectorAt(idx);
+    const real3 tM = traction.getSide(d, -1).vectorAt(idx);
+
+    for (int a = 0; a < 3; a++) {
+      const int bc = 3 * d + a;  // (direction d, component a)
+
+      // ---- own-side flux difference ----
+      const CuParameter& Cn = (a == d) ? C11 : C44;
+      const real Cs = Cn.valueAt(idx);
+      const real Cm = solidM ? Cn.valueAt(idx_m) : real(0);
+      const real Cp = solidP ? Cn.valueAt(idx_p) : real(0);
+      const real us = u.valueAt(idx, a);
+      const real um = solidM ? u.valueAt(idx_m, a) : real(0);
+      const real up = solidP ? u.valueAt(idx_p, a) : real(0);
+      const real BmR =
+          solidM ? BR.valueAt(idx_m, bc) : -comp3(tM, a);  // S = -t on -d face
+      const real BpL =
+          solidP ? BL.valueAt(idx_p, bc) : comp3(tP, a);  // S = +t on +d face
+
+      f[a] +=
+          directSecondDerivative(us, um, up, Cs, Cm, Cp, BL.valueAt(idx, bc),
+                                 BR.valueAt(idx, bc), BmR, BpL, h);
+
+      // ---- mixed derivative(s) ----
+      if (a == d) {
+        for (int e = 0; e < 3; e++) {
+          if (e == d)
+            continue;
+          f[a] += mixedTerm(gu, 3 * e + e, C12, idx, solidM, idx_m, solidP,
+                            idx_p, h);
+        }
+      } else {
+        f[a] +=
+            mixedTerm(gu, 3 * a + d, C44, idx, solidM, idx_m, solidP, idx_p, h);
+      }
+    }
+  }
+
+  fField.setVectorInCell(idx, real3{f[0], f[1], f[2]});
+}
+
 Field evalInternalBodyForce(const Magnet* magnet) {
   Field fField(magnet->system(), 3);
   fField.makeZero();
@@ -454,45 +564,19 @@ Field evalInternalBodyForce(const Magnet* magnet) {
     CuParameter C11 = magnet->C11.cu();
     CuParameter C12 = magnet->C12.cu();
     CuParameter C44 = magnet->C44.cu();
+    const int3 thin = thinAxes(magnet->grid(), mastergrid);
 
-    debugFieldStats(u, ncells, "u (elasticDisplacement, input)");
-
-    Field gradU = evalDisplacementGradientTensor(magnet);
-    debugFieldStats(gradU.cu(), ncells, "gradU (evalDisplacementGradientTensor)");
-    FaceEigenstrainTraction fe = evalFaceEigenstrainTraction(magnet);
-    debugFieldStats(fe.faceL.cu(), ncells, "sigmaFaceL");
-    debugFieldStats(fe.faceR.cu(), ncells, "sigmaFaceR");
+    ElasticJumpData jd = evalElasticJumpData(magnet);
 
     Field elasticForce(magnet->system(), 3);
-    cudaLaunch(ncells, k_elasticForceDirect, elasticForce.cu(), u, gradU.cu(),
-               fe.faceL.cu(), fe.faceR.cu(), C11, C12, C44, w, mastergrid);
-    debugFieldStats(elasticForce.cu(), ncells, "elasticForce (k_elasticForceDirect)");
-    debugFieldSum(elasticForce, "elasticForce (k_elasticForceDirect)");
-
-    // The free-surface traction condition must use the ELASTIC-ONLY stress
-    // (C:eps_total - sigma_mel), not the total stress: the magnetoelastic
-    // eigenstrain is an internal material effect, not an externally applied
-    // load, so it must be subtracted before imposing a zero-traction outer
-    // boundary condition. Mirrors magnum.np's dpd():
-    //   sig_ii -= sig_m[...,:3]; sig_ij -= sig_m[...,3:]
-    // Deliberately done here (not inside evalElasticStress itself), since
-    // evalElasticStress also backs the user-facing stress_tensor quantity,
-    // which should keep reporting the total (elastic + eigenstrain) stress.
-    Field elasticStress = evalElasticStress(magnet);
-    debugFieldStats(elasticStress.cu(), ncells, "elasticStress (before sigMel subtraction)");
-    Field sigMel = evalMagnetoelasticStressVoigt(magnet);
-    debugFieldStats(sigMel.cu(), ncells, "sigMel (evalMagnetoelasticStressVoigt)");
-    elasticStress -= sigMel;
-    debugFieldStats(elasticStress.cu(), ncells, "elasticStress (after sigMel subtraction)");
-
-    Field boundaryForce(magnet->system(), 3);
-    cudaLaunch(ncells, k_elasticBoundaryTraction, boundaryForce.cu(),
-               elasticStress.cu(), traction, w, mastergrid);
-    debugFieldStats(boundaryForce.cu(), ncells, "boundaryForce (k_elasticBoundaryTraction)");
-    debugFieldSum(boundaryForce, "boundaryForce (k_elasticBoundaryTraction)");
+    cudaLaunch(ncells, k_elasticForceMagnum, elasticForce.cu(), u, jd.gu.cu(),
+               jd.BL.cu(), jd.BR.cu(), C11, C12, C44, traction, w, mastergrid,
+               thin);
+    debugFieldStats(elasticForce.cu(), ncells,
+                    "elasticForce (k_elasticForceMagnum)");
+    debugFieldSum(elasticForce, "elasticForce (k_elasticForceMagnum)");
 
     fField += elasticForce;
-    fField += boundaryForce;
   }
 
   // ---- viscous part: unchanged, plain divergence of the viscous stress ----
@@ -502,13 +586,16 @@ Field evalInternalBodyForce(const Magnet* magnet) {
   //      above did NOT already supply the outer-boundary traction.
   if (!viscousDampingAssuredZero(magnet)) {
     Field viscousStress = evalViscousStress(magnet);
-    debugFieldStats(viscousStress.cu(), ncells, "viscousStress (evalViscousStress)");
+    debugFieldStats(viscousStress.cu(), ncells,
+                    "viscousStress (evalViscousStress)");
 
     Field viscousForce(magnet->system(), 3);
     const bool viscousIncludesTraction = !elasticPresent;
-    cudaLaunch(ncells, k_viscousBodyForce, viscousForce.cu(), viscousStress.cu(),
-               traction, w, mastergrid, viscousIncludesTraction);
-    debugFieldStats(viscousForce.cu(), ncells, "viscousForce (k_viscousBodyForce)");
+    cudaLaunch(ncells, k_viscousBodyForce, viscousForce.cu(),
+               viscousStress.cu(), traction, w, mastergrid,
+               viscousIncludesTraction);
+    debugFieldStats(viscousForce.cu(), ncells,
+                    "viscousForce (k_viscousBodyForce)");
     debugFieldSum(viscousForce, "viscousForce (k_viscousBodyForce)");
 
     fField += viscousForce;
@@ -521,5 +608,6 @@ Field evalInternalBodyForce(const Magnet* magnet) {
 }
 
 M_FieldQuantity internalBodyForceQuantity(const Magnet* magnet) {
-  return M_FieldQuantity(magnet, evalInternalBodyForce, 3, "internal_body_force", "N/m3");
+  return M_FieldQuantity(magnet, evalInternalBodyForce, 3,
+                         "internal_body_force", "N/m3");
 }
