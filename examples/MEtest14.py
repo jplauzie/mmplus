@@ -43,7 +43,7 @@ r_in, r_out = 0.5 * d_inner, 0.5 * d_outer
 # --- switches for tracking down the slowdown ---
 CENTER_ON_CELL = False       # False = centering at 512 nm (between cells), noticeably faster
 KILL_STIFFNESS_DAMPING = True  # False = leave the default stiffness damping on
-FIXED_DT = None           # None = adaptive; e.g. 1e-13, then 5e-14, for a convergence test
+FIXED_DT = None          # None = adaptive; e.g. 1e-13, then 5e-14, for a convergence test
 
 if CENTER_ON_CELL:
     # Assumes cell (i, j) has its center at (i*cx, j*cy); verified against the grid below.
@@ -169,6 +169,17 @@ for i in range(3):
     u[i, ...] -= u_avg[i]
 magnet.elastic_displacement = u
 
+geom = magnet.geometry.astype(bool)     # (nz, ny, nx); check the property name in your build
+
+def rayleigh_f():
+    uu = magnet.elastic_displacement.eval()
+    ff = magnet.internal_body_force.eval()      # v = 0 at t=0, so viscous force is 0
+    num = -np.sum(uu * ff * geom)               # u . (-K u)
+    den = rho * np.sum(uu**2 * geom)
+    return np.sqrt(num / den) / (2*np.pi)
+
+print(f"Rayleigh f = {rayleigh_f()/1e9:.4f} GHz (analytic {f_mode/1e9:.4f}, sim FFT 4.79)")
+
 # probe cell on the +x side, middle of the ring (u_x there = radial displacement)
 probe_target = (ring_center[0] + 0.5*(r_in + r_out), ring_center[1])
 dist = np.hypot(pos[0, 0] - probe_target[0], pos[1, 0] - probe_target[1])
@@ -189,18 +200,41 @@ u_probe = np.zeros(steps)
 dts = np.zeros(steps)
 t_run = 0.0
 
+u_save = magnet.elastic_displacement.eval().copy()
+from scipy.sparse.linalg import LinearOperator, eigs
+
+mask = np.zeros(pos.shape, bool); mask[0] = geom; mask[1] = geom   # u_z = 0, plane strain
+n = int(mask.sum())
+
+def matvec(x):
+    uu = np.zeros(pos.shape); uu[mask] = x
+    magnet.elastic_displacement = uu
+    return magnet.internal_body_force.eval()[mask] / rho
+
+Kop = LinearOperator((n, n), matvec=matvec, dtype=float)
+lam_neg = eigs(Kop, k=4, which='SR', ncv=40, return_eigenvectors=False)  # most negative real part
+magnet.elastic_displacement = u_save
+# velocity is untouched, but check kinetic_energy ~ 0 here
+print("omega_max =", np.sqrt(-lam_neg.real.min()), "rad/s ;  dt* ~ 2.8/omega_max =",
+      2.8/np.sqrt(-lam_neg.real.min()))
+print("imag parts (should be ~0):", np.abs(lam_neg.imag).max())
+
 
 V_cell = cx*cy*cz
+beta0 = magnet.stiffness_damping.average()[0]      # before the loop
+
 def pot_energy_eV():
+    magnet.stiffness_damping = 0                   # internal_body_force would include the viscous force
     uu = magnet.elastic_displacement.eval()
     ff = magnet.internal_body_force.eval()
+    magnet.stiffness_damping = beta0
     return -0.5 * V_cell * np.sum(uu * ff) * J_to_eV
 
 # mechanical (kinetic + elastic) energy at t = 0, the reference for the energy loss
 E_mech0 = magnet.kinetic_energy.eval() * J_to_eV + pot_energy_eV()
 print(f"initial mechanical energy: {E_mech0:.4e} eV (analytic: {E_tot*J_to_eV:.4e} eV)")
 
-world.timesolver.set_method("Fehlberg")
+world.timesolver.set_method("DormandPrince")
 
 print("Simulating...")
 E_pot = np.zeros(steps)
@@ -217,6 +251,11 @@ for i in tqdm(range(steps)):
     ff = magnet.internal_body_force.eval()
     E_pot[i] = pot_energy_eV()
     u_probe[i] = magnet.elastic_displacement.eval()[0, 0, jy, ix]
+    
+dE = (E_el - E_pot) / E_mech0 * 100          # reported elastic energy vs exact potential, % of E0
+print(f"E_el - E_pot: first {dE[0]:+.4f}  mean {dE.mean():+.4f}  ptp {np.ptp(dE):.4f} %")
+E_rep = E_kin + E_el
+print(f"reported total: ptp {100*np.ptp(E_rep-E_rep.mean())/E_mech0:.4f} %")
 
 print(f"run(): {t_run:.1f} s, timestep min/mean/max: "
       f"{dts.min():.2e} / {dts.mean():.2e} / {dts.max():.2e} s")

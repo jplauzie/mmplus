@@ -157,9 +157,9 @@ inline void debugFieldSum(const Field& field, const char* label) {
 }
 
 // Computes the full gradient tensor (∂f_c/∂x_i) of a 3-component field `f` at
-// cell `idx` (grid coordinate `coo`), using the same adaptive one-sided/central
-// finite-difference stencil previously duplicated between k_strainTensor
-// (straintensor.cu) and k_magnetoelasticForce (magnetoelasticforce.cu).
+// cell `idx` (grid coordinate `coo`), using an adaptive one-sided/central
+// finite-difference stencil (magnetoelasticforce.cu keeps its own copy of the
+// same stencil). Used by k_faceEigenstrainTraction for the gradient of m.
 //
 // Result convention:
 //   grad[i][c] = d f_c / d x_i
@@ -224,26 +224,6 @@ __device__ inline void deviceGradientTensor(real grad[3][3],
     grad[i][1] = dfdi.y;
     grad[i][2] = dfdi.z;
   }
-}
-
-// True if both the -i and +i neighbors of `coo` (wrapped through mastergrid)
-// are inside the geometry, i.e. this cell is not adjacent to the outer
-// geometry/vacuum boundary in direction i. Interior material-interface
-// (stiffness-jump) corrections are only ever applied where this holds; at the
-// true outer boundary the one-sided stencils already computed by
-// deviceGradientTensor are left untouched.
-__device__ inline bool interiorInDirection(const CuSystem& system,
-                                           const Grid& mastergrid,
-                                           int3 coo,
-                                           int dir) {
-  const int3 step_arr[3] = {int3{1, 0, 0}, int3{0, 1, 0}, int3{0, 0, 1}};
-  int3 coo_im1 = mastergrid.wrap(coo - step_arr[dir]);
-  int3 coo_ip1 = mastergrid.wrap(coo + step_arr[dir]);
-  return system.inGeometry(coo_im1) && system.inGeometry(coo_ip1);
-}
-
-__device__ inline int3 gradRowComps(int i) {
-  return int3{3 * i, 3 * i + 1, 3 * i + 2};
 }
 
 // Axes with a single cell and no periodicity are "thin": d/dx_i == 0 there
@@ -332,10 +312,14 @@ __device__ inline real secondDerivFaceTerm(real C_self,
 // across interior interfaces where C (or an eigenstrain-type offset B) is
 // discontinuous. `u_self`/`u_im1`/`u_ip1` are the raw field values (not
 // derivatives) of component c; `Bself_L`/`Bself_R` are this cell's own two
-// half-face eigenstrain offsets (as produced by straintensor.cu's
-// k_faceEigenstrainTraction), `Bim1_R`/`Bip1_L` the corresponding neighbor
-// cells' own outward-facing values at the two shared faces. Matches magnum's
+// half-face offsets (sigma_mel + B_eps, as built by k_buildJumpOffsets),
+// `Bim1_R`/`Bip1_L` the corresponding neighbor cells' own outward-facing
+// values at the two shared faces. Matches magnum's
 // _2nd_derivative_homogeneous_Neumann (ij_C = [i,i]).
+//
+// A non-solid neighbour (void or grid edge): pass C_nb = 0, u_nb = 0, and the
+// face stress S = sense*t as the neighbour's offset (0 for a free surface); the
+// face term then reduces to (S - B_self)/h.
 __device__ inline real directSecondDerivative(real u_self,
                                               real u_im1,
                                               real u_ip1,
@@ -362,14 +346,14 @@ __device__ inline real directSecondDerivative(real u_self,
 // computed (jump-corrected) first-derivative field (e.g. d(u_a)/dx_i for some
 // other direction i != j), jump-aware across interfaces where C is
 // discontinuous. Matches magnum's _mixed_derivative, which computes this as
-// gradient_with_pbc(C*g, dim=j, C=[C]) with no B offset -- i.e. this is the
-// SAME two-point jump formula as directSecondDerivative/Kernel 3, applied as a
-// first derivative of the flux F = C*g, not a second derivative of g itself.
+// gradient_with_pbc(C*g, dim=j, C=[C]) with no B offset -- i.e. the same
+// two-point formula as k_gradientJump with B = 0, applied as a first derivative
+// of the flux F = C*g, not a second derivative of g itself. A non-solid
+// neighbour has C = 0 (weight 0), so only the solid side contributes.
 //
 // contrib(self,neighbor) = 2*C_neighbor*(F_neighbor - F_self) /
 // (h*(C_self+C_neighbor)) with F = C*g, and the final derivative the average of
-// the two face contributions (mirrors k_jumpCorrectGradient's weighting, but
-// with B == 0).
+// the two face contributions.
 __device__ inline real directMixedDerivative(real g_self,
                                              real g_im1,
                                              real g_ip1,
