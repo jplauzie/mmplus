@@ -137,7 +137,7 @@ bool StrayField::assuredZero() const {
       if (!sub->msat.assuredZero())
         return false;
     return true;
-  } else  {
+  } else {
     throw std::invalid_argument(
         "Cannot calculate strayfield since magnet is neither "
         "a Ferromagnet, a (non-collinear) "
